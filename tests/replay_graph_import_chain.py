@@ -11,10 +11,13 @@ from replay_support import (ROOT, check_rejection, check_verdicts, observe, quin
 
 SPEC = ROOT / 'spec/graph_import_chain.qnt'
 FIXTURE = ROOT / 'tests/fixtures/graph_import_chain'
+METHODS = ('Definition', 'Hover', 'References')
 HISTORIES = {f'{prefix}{method}{suffix}Test'
              for prefix, suffix in [('freshImported', ''), ('diskWrapper', 'Recovery'),
-                                    ('dirtyWrapperRefuses', ''), ('changedWrapperAllowsLocal', '')]
-             for method in ('Definition', 'Hover', 'References')}
+                                    ('dirtyWrapperRefuses', ''), ('changedWrapperAllowsLocal', ''),
+                                    ('delayedFresh', ''), ('delayedDirtyCaller', ''), ('delayedDiskWrapper', ''),
+                                    ('delayedDirtyWrapper', ''), ('delayedLocal', '')]
+             for method in METHODS}
 
 
 def replay(directory, worktree):
@@ -38,20 +41,24 @@ def replay(directory, worktree):
         tests.append(verdict_test(name, requests, observations))
         names.add(name)
 
-    def control(name, history, method, occurrence, **changed):
+    def step_for(requests, op, occurrence):
+        return [step for step, request in enumerate(requests) if request['op'] == op][occurrence]
+
+    def observed(history, op):
         requests, views = replays[history]
-        steps = [step for step, request in enumerate(requests) if request['op'] == method]
-        step = steps[occurrence]
+        return views[step_for(requests, op, 0)]
+
+    def control(name, history, op, occurrence, **changed):
+        requests, views = replays[history]
+        step = step_for(requests, op, occurrence)
         mutated = views.copy()
         mutated[step] = {**mutated[step], **changed}
         tests.append(verdict_test(name, requests, mutated))
         return name
 
-    fresh_definition_requests, fresh_definition_views = replays['freshImportedDefinitionTest']
-    definition = next(view for request, view in zip(fresh_definition_requests, fresh_definition_views, strict=True)
-                      if request['op'] == 'definition')
-    hover = replays['freshImportedHoverTest'][1][-1]
-    references = replays['freshImportedReferencesTest'][1][-1]
+    definition = observed('freshImportedDefinitionTest', 'definition')
+    hover = observed('freshImportedHoverTest', 'hover')
+    references = observed('freshImportedReferencesTest', 'references')
     controls = [
         control('diskWrapperLookupRejectedTest', 'diskWrapperDefinitionRecoveryTest', 'definition', 0,
                 lookups=definition['lookups']),
@@ -62,6 +69,14 @@ def replay(directory, worktree):
         control('originalPolicyReferencesRejectedTest', 'diskWrapperReferencesRecoveryTest', 'references', 1,
                 references=references['references']),
     ]
+    for method, edit in zip(METHODS, ('DiskWrapper', 'DirtyCaller', 'DirtyWrapper'), strict=True):
+        fresh = observed(f'delayedFresh{method}Test', 'deliverReply')
+        # Apply the real result of a fresh reply to a stale one, keeping the warning and request log.
+        effects = {key: value for key, value in fresh.items() if key not in ('notices', 'lookups')}
+        controls.append(control(f'staleReplyMustNotShow{method}Test', f'delayed{edit}{method}Test',
+                                'deliverReply', 0, **effects))
+    controls.append(control('staleReplyMustWarnTest', 'delayedDiskWrapperDefinitionTest', 'deliverReply', 0,
+                            notices=[]))
     verdicts = directory / 'graph_import_chain_verdicts.qnt'
     verdicts.write_text('\n\n'.join(tests) + '\n}\n', encoding='utf-8')
     check_verdicts(verdicts, directory / 'verdicts', names)

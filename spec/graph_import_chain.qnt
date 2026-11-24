@@ -8,10 +8,10 @@ module graph_import_chain {
   type View = {
     windows: int, focus: str, graphAtOrigin: bool, graphReadOnly: bool,
     position: Position, hover: str, loclistTitle: str, references: List[Position],
-    lookups: List[Lookup], notices: List[Notice],
+    lookups: List[Lookup], notices: List[Notice], heldReply: bool,
   }
   type Session = {
-    request: Request, phase: str, selected: str, edit: str, refreshed: bool, view: View,
+    request: Request, phase: str, selected: str, edit: str, refreshed: bool, heldMethod: str, view: View,
   }
   var session: Session
 
@@ -30,12 +30,18 @@ module graph_import_chain {
   pure val calls = Set(selectImport, selectLocal)
   pure val edits = Set(editDisk, editBuffer)
   pure val lookupRequests = Set(definition, hoverRequest, refs)
-  pure val requests = calls.union(edits).union(lookupRequests).union(Set(showRequest, returnRequest, reanalyze, back))
+  pure def hold(method: Request): Request = { op: "holdLookup", arg: method.op }
+  pure val heldLookups = lookupRequests.map(hold)
+  pure val editCaller = { op: "editCallerBuffer", arg: "" }
+  pure val deliver = { op: "deliverReply", arg: "" }
+  pure val pendingEdits = edits.union(Set(editCaller))
+  pure val requests = calls.union(pendingEdits).union(lookupRequests).union(heldLookups)
+    .union(Set(showRequest, returnRequest, reanalyze, back, deliver))
 
   pure val callerView: View = {
     windows: 1, focus: "caller.qnt", graphAtOrigin: false, graphReadOnly: false,
     position: { file: "", line: 0, column: 0 }, hover: "", loclistTitle: "", references: List(),
-    lookups: List(), notices: List(),
+    lookups: List(), notices: List(), heldReply: false,
   }
   pure def graphView(atOrigin: bool): View = {
     ...callerView, focus: "graph", graphAtOrigin: atOrigin, graphReadOnly: true,
@@ -74,11 +80,19 @@ module graph_import_chain {
     }
   }
 
+  pure def awaitingReply(lookups: List[Lookup]): View = {
+    ...graphView(true), lookups: lookups, heldReply: true,
+  }
+  pure def replyResult(method: str, imported: bool): View = {
+    ...result(method, imported, false), lookups: List(),
+  }
+
   action init = session' = {
-    request: initRequest, phase: "source", selected: "", edit: "none", refreshed: false, view: callerView,
+    request: initRequest, phase: "source", selected: "", edit: "none", refreshed: false,
+    heldMethod: "", view: callerView,
   }
   val imported = session.selected == selectImport.arg
-  val stale = imported and session.edit != "none" and not(session.refreshed)
+  val stale = (session.edit == editCaller.op or (imported and session.edit != "none")) and not(session.refreshed)
   action perform(request: Request): bool = any {
     all {
       request == showRequest, session.phase == "source", session.edit == "none" or session.refreshed,
@@ -97,6 +111,21 @@ module graph_import_chain {
       session' = if (stale) { ...session, request: request, phase: "blocked", view: staleView }
         else { ...session, request: request, phase: "result", view: result(request.op, imported, session.refreshed) },
     },
+    // A real reply arrives at the transport but has not reached the viewer yet.
+    all {
+      heldLookups.contains(request), session.phase == "call", session.edit == "none",
+      session' = { ...session, request: request, phase: "held", heldMethod: request.arg,
+        view: awaitingReply(List(requestAtCall(request.arg, imported))) },
+    },
+    all {
+      pendingEdits.contains(request), session.phase == "held", session.edit == "none",
+      session' = { ...session, request: request, edit: request.op, view: awaitingReply(List()) },
+    },
+    all {
+      request == deliver, session.phase == "held",
+      session' = { ...session, request: request, phase: "completed",
+        view: if (stale) staleView else replyResult(session.heldMethod, imported) },
+    },
     all {
       request == returnRequest, session.phase == "blocked", session.edit == editDisk.op,
       session' = { ...session, request: request, phase: "source", selected: "", view: callerView },
@@ -106,13 +135,15 @@ module graph_import_chain {
       session' = { ...session, request: request, refreshed: true },
     },
     all {
-      request == back, session.phase == "result", session.request == definition,
+      request == back,
+      (session.phase == "result" and session.request == definition) or
+        (session.phase == "completed" and session.heldMethod == definition.op and not(stale)),
       session' = { ...session, request: request, phase: "back", view: graphView(true) },
     },
   }
   action step = any {
     { nondet request = requests.oneOf(); perform(request) },
-    all { Set("blocked", "result", "back").contains(session.phase), session' = session },
+    all { Set("blocked", "result", "completed", "back").contains(session.phase), session' = session },
   }
 
   pure def positionSet(positions: List[Position]): Set[Position] =
@@ -126,6 +157,11 @@ module graph_import_chain {
   val freshLookupUsesCurrentScope = (lookupRequests.contains(session.request) and not(stale)) implies
     session.view == result(session.request.op, imported, session.refreshed)
   val backRestoresGraph = (session.request == back) implies session.view == graphView(true)
+  val waitingKeepsGraph = (session.phase == "held") implies session.view == awaitingReply(
+    if (heldLookups.contains(session.request)) List(requestAtCall(session.heldMethod, imported)) else List())
+  val staleReplyKeepsGraph = (session.request == deliver and stale) implies session.view == staleView
+  val freshReplyUsesCurrentScope = (session.request == deliver and not(stale)) implies
+    session.view == replyResult(session.heldMethod, imported)
 
   action openAtCall(call: Request): bool = perform(showRequest).then(perform(call))
   action freshImport(method: Request): bool = openAtCall(selectImport).then(perform(method))
@@ -151,4 +187,31 @@ module graph_import_chain {
     .then(perform(back)).expect(backRestoresGraph)
   run changedWrapperAllowsLocalHoverTest = init.then(unaffectedLocal(hoverRequest)).expect(resultMatches)
   run changedWrapperAllowsLocalReferencesTest = init.then(unaffectedLocal(refs)).expect(resultMatches)
+
+  action waitAtCall(call: Request, method: Request): bool = openAtCall(call).then(perform(hold(method)))
+  action freshDelay(method: Request): bool = waitAtCall(selectImport, method).then(perform(deliver))
+  action staleDelay(edit: Request, method: Request): bool = waitAtCall(selectImport, method)
+    .then(perform(edit)).then(perform(deliver))
+  action localDelay(method: Request): bool = waitAtCall(selectLocal, method)
+    .then(perform(editDisk)).then(perform(deliver))
+  val replyAccepted = session.phase == "completed" and not(stale) and freshReplyUsesCurrentScope
+  val replyDiscarded = session.phase == "completed" and stale and staleReplyKeepsGraph
+
+  run delayedFreshDefinitionTest = init.then(freshDelay(definition)).expect(replyAccepted)
+    .then(perform(back)).expect(backRestoresGraph)
+  run delayedFreshHoverTest = init.then(freshDelay(hoverRequest)).expect(replyAccepted)
+  run delayedFreshReferencesTest = init.then(freshDelay(refs)).expect(replyAccepted)
+  run delayedDirtyCallerDefinitionTest = init.then(staleDelay(editCaller, definition)).expect(replyDiscarded)
+  run delayedDirtyCallerHoverTest = init.then(staleDelay(editCaller, hoverRequest)).expect(replyDiscarded)
+  run delayedDirtyCallerReferencesTest = init.then(staleDelay(editCaller, refs)).expect(replyDiscarded)
+  run delayedDiskWrapperDefinitionTest = init.then(staleDelay(editDisk, definition)).expect(replyDiscarded)
+  run delayedDiskWrapperHoverTest = init.then(staleDelay(editDisk, hoverRequest)).expect(replyDiscarded)
+  run delayedDiskWrapperReferencesTest = init.then(staleDelay(editDisk, refs)).expect(replyDiscarded)
+  run delayedDirtyWrapperDefinitionTest = init.then(staleDelay(editBuffer, definition)).expect(replyDiscarded)
+  run delayedDirtyWrapperHoverTest = init.then(staleDelay(editBuffer, hoverRequest)).expect(replyDiscarded)
+  run delayedDirtyWrapperReferencesTest = init.then(staleDelay(editBuffer, refs)).expect(replyDiscarded)
+  run delayedLocalDefinitionTest = init.then(localDelay(definition)).expect(replyAccepted)
+    .then(perform(back)).expect(backRestoresGraph)
+  run delayedLocalHoverTest = init.then(localDelay(hoverRequest)).expect(replyAccepted)
+  run delayedLocalReferencesTest = init.then(localDelay(refs)).expect(replyAccepted)
 }

@@ -8,6 +8,7 @@ local source_uri = vim.uri_from_fname(source)
 local input_path, output_path = assert(arg[1]), assert(arg[2])
 local source_buf, graph_buf, graph_win, origin
 local publications, pending = {}, 0
+local hold_method, held_reply
 local notices, lookups = {}, {}
 
 local function printable(value)
@@ -29,12 +30,23 @@ local function integer(value)
 end
 
 local function observe_rpc(client)
-  -- Observe outbound requests without stubbing or modifying the upstream responses.
+  -- Observe real requests and optionally hold the upstream reply before delivery.
   local send = client.rpc.request
   client.rpc.request = function(method, params, callback, ...)
     if method == 'shutdown' then return send(method, params, callback, ...) end
-    local sent, id = send(method, params, function(...)
-      callback(...)
+    local hold = method == hold_method
+    if hold then hold_method = nil end
+    local sent, id = send(method, params, function(err, result, ...)
+      if hold then
+        local args = {n = select('#', ...), ...}
+        held_reply = {
+          err = err, result = result,
+          deliver = function() callback(err, result, unpack(args, 1, args.n)) end,
+        }
+      else
+        callback(err, result, ...)
+      end
+      -- This counter tracks replies from the server, not held deliveries.
       vim.schedule(function() pending = pending - 1 end)
     end, ...)
     if sent then
@@ -101,6 +113,8 @@ local function press(keys)
   api.nvim_feedkeys(api.nvim_replace_termcodes(keys, true, false, true), 'mx', false)
 end
 
+local keys = {definition = 'gd', hover = 'K', references = 'grr'}
+
 local function redirect(lines)
   -- Redirect the re-export to the other module without changing either endpoint file.
   local changes = 0
@@ -141,9 +155,24 @@ local actions = {
     vim.fn.bufload(buf)
     api.nvim_buf_set_lines(buf, 0, -1, false, redirect(api.nvim_buf_get_lines(buf, 0, -1, false)))
   end,
-  definition = function() press('gd') end,
-  hover = function() press('K') end,
-  references = function() press('grr') end,
+  editCallerBuffer = function()
+    api.nvim_buf_set_lines(source_buf, 0, 0, false, {'// Unsaved caller edit.'})
+  end,
+  definition = function() press(keys.definition) end,
+  hover = function() press(keys.hover) end,
+  references = function() press(keys.references) end,
+  holdLookup = function(method)
+    assert(not hold_method and not held_reply, 'already holding a lookup')
+    hold_method = 'textDocument/' .. method
+    press(assert(keys[method], 'unknown lookup method: ' .. method))
+  end,
+  deliverReply = function()
+    local reply = assert(held_reply, 'no reply held for delivery')
+    assert(not reply.err and type(reply.result) == 'table' and next(reply.result),
+      'expected a successful, nonempty Quint response')
+    held_reply = nil
+    reply.deliver()
+  end,
   back = function() press('<C-o>') end,
   returnToCaller = function()
     graph_buf, graph_win, origin = nil, nil, nil
@@ -161,7 +190,7 @@ local function observe(op)
   local name = api.nvim_buf_get_name(buf)
   local focus = vim.bo[buf].filetype == 'qmodelgraph' and 'graph' or fixture_file(name)
   local position = {file = '', line = 0, column = 0}
-  if op == 'definition' and vim.bo[buf].buftype == '' then
+  if (op == 'definition' or op == 'deliverReply') and vim.bo[buf].buftype == '' then
     local cursor = api.nvim_win_get_cursor(win)
     position = {file = fixture_file(name), line = cursor[1], column = cursor[2]}
   end
@@ -195,6 +224,7 @@ local function observe(op)
       and vim.bo[graph_buf].filetype == 'qmodelgraph' and not vim.bo[graph_buf].modifiable,
     graphAtOrigin = origin ~= nil and graph_in_window and vim.deep_equal(api.nvim_win_get_cursor(graph_win), origin),
     loclistTitle = title, references = references, lookups = lookups, notices = notices,
+    heldReply = held_reply ~= nil,
   }
 end
 

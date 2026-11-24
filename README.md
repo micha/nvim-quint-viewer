@@ -62,7 +62,8 @@ If the file you built the graph from changes, the old graph stays readable
 but refuses new lookups. For imported symbols, the viewer also checks every
 file Quint read through imports, including intermediate re-exports. An
 edited, out-of-date, or unavailable import blocks imported lookups without
-blocking local ones. Save or reload the affected files, then rebuild the
+blocking local ones. The viewer checks freshness again before acting on a
+reply. Save or reload the affected files, then rebuild the
 graph with `:QuintView review` from the caller. For imported
 symbols, `gd` only jumps if the server's destination matches the declaration's
 mapped file, line, and byte column. A `grr` list must contain that same

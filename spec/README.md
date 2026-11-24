@@ -44,7 +44,7 @@ the named histories in each model and checks each emits a trace. TLC
 explores 15 reachable states for selection, 27 for source graph navigation,
 103 for branch folding, 14 for graph hover and references, 61 for cross-file
 definition navigation, 18 for hover on imported calls, 64 for references
-to imported calls, and 43 for lookup freshness across re-exports.
+to imported calls, and 95 for lookup freshness across re-exports and delayed replies.
 These checks verify the models, not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
@@ -271,17 +271,34 @@ the server from the caller and rebuilding the graph recovers all three lookups
 with the new declaration, hover text, and reference list. After a successful
 `gd`, `Ctrl-O` restores the original graph buffer and cursor.
 
-[TLC](#verify-and-generate-histories) checks all 43 reachable states without a
-trace-length cap (reachable depth 11, including the initial state). The
-[model](graph_import_chain.qnt) covers one chain, one ready server, one edit,
-and recovery after a disk edit. Rebuilding without a server restart and
-changes while a request is in flight are outside this slice.
+### Delayed replies
 
-The [replay](../tests/replay_graph_import_chain.py) exercises 12 histories
-with the real server. Negative controls report a sent request after a disk
-or buffer edit, or substitute the original hover or reference list after
-recovery. Quint rejects each. Run `scripts/check.sh --worktree --with-lsp`
-with the tools above, or `python3 -B tests/replay_graph_import_chain.py --worktree`.
+If a lookup starts fresh but the caller or an intermediate re-export is
+stale when its reply reaches the viewer, the viewer warns once and discards
+it. There is one request at the original occurrence and no retry. Focus and
+the exact graph cursor stay put; no definition jump, hover, or location list
+appears. Without an edit, all three delayed lookups still work. A re-export
+edit alone does not invalidate a delayed local lookup. Successful delayed
+`gd` jumps still allow `Ctrl-O` back to the exact graph position.
+
+[TLC](#verify-and-generate-histories) checks all 95 reachable states in the
+combined [model](graph_import_chain.qnt) without a trace-length cap (depth 11,
+including the initial state). It covers one chain, one ready server, and at
+most one edit. The delayed-reply histories make an unsaved caller edit or a
+disk or unsaved buffer edit to the wrapper. Competing lookups, a change of
+graph focus or cursor, edits reverted before delivery, and stale server
+analysis after a rebuild without a restart are outside this slice.
+
+The [replay](../tests/replay_graph_import_chain.py) exercises 27 histories
+with the real server, including 15 delayed replies. It holds the actual
+successful RPC reply before Neovim passes it to the viewer, applies any edit,
+then delivers the reply unchanged. This tests reply handling, not the timing
+of server analysis. Negative controls substitute fresh jumps, hovers, and
+reference lists at stale reply delivery while keeping the warning, or remove
+the warning itself. The earlier controls still cover requests sent from an
+already-stale graph and old results after recovery. Quint rejects each.
+Run `scripts/check.sh --worktree --with-lsp` with the tools above, or
+`python3 -B tests/replay_graph_import_chain.py --worktree`.
 
 ## Native branch folding
 
