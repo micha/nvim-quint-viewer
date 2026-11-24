@@ -64,6 +64,11 @@ python3 tools/export_model.py ../dml/tests/ref_rules.qnt editRef finishTxn \
 
 ## Develop
 
+New features and observable behavior changes follow the
+[Quint-first workflow](AGENTS.md#quint-first-development): verify the design
+before implementing it, then replay Quint histories against headless Neovim.
+The verification and replay harnesses are not implemented yet.
+
 `nix develop -c scripts/check.sh` checks deterministic export, artifact
 selection, and navigation using a clean, locally installed Neovim package.
 Without Nix, run `scripts/check.sh` with Git, Python 3, Quint 0.33.1, and
