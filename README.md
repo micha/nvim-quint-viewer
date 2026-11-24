@@ -54,17 +54,22 @@ nested branches, try the [access review example](examples/access_review/).
 - `K` shows the language server's type and documentation in a preview without
   leaving the graph.
 - `grr` opens a location list of source references, including the declaration.
+  For imported symbols, Quint searches the source file and its imports, not the
+  whole workspace. Other callers are not searched just because they're open.
   Press Enter on an entry to visit it, or use `:lclose` to close the list.
 
 If the file you built the graph from changes, the old graph stays readable
-but refuses new lookups. For `gd` and `K` on an imported symbol, the viewer also
-checks the definition's file. An edited or unavailable file blocks lookups on
-that symbol without blocking local lookups. Save or reload any affected files,
-then rebuild the graph with `:QuintView review` from the caller. If the server
-still returns an old definition location or outdated hover text, restart it
-from the caller with `:lsp restart quint`, wait for it to analyze the file,
-and try again. The viewer does not refresh location lists already returned by
-the server.
+but refuses new lookups. For an imported symbol, the viewer also checks the
+file that defines it. An edited or unavailable file blocks lookups on that
+symbol without blocking local lookups. Save or reload any affected files, then
+rebuild the graph with `:QuintView review` from the caller. An imported reference
+list must include the declaration at its mapped line and column. This check
+can catch a moved declaration but does not guarantee every returned use is up
+to date. If the server still returns outdated results, run `:lsp restart quint`
+from the caller, wait for analysis, and try again. The viewer does not refresh
+location lists already returned by the server. Quint language server 0.21.0
+can report incorrect columns after non-BMP characters (such as emoji) on the
+declaration line; the viewer rejects imported lists with mismatched columns.
 
 Explicit `if`/`else` branches start expanded. On a `Yes` or `No` heading,
 press `za` to toggle that branch, `zc` to close it, or `zo` to open it. A closed
@@ -84,9 +89,8 @@ module, the viewer uses the only module in the file, or the one named after
 the file if there are several. If neither identifies a module, place the
 cursor inside one. Modules don't have to match the filename.
 
-`gd`, `K`, and `grr` work on indexed references when a single attached LSP
-client supports the requested operation. `gd` and `K` also work on imported
-symbols; `grr` is limited to local links.
+`gd`, `K`, and `grr` work on indexed local and imported references when a
+single attached LSP client supports the requested operation.
 
 ## Develop
 

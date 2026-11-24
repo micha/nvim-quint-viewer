@@ -14,7 +14,7 @@ def export(source, output, *names):
                     str(source), *names], check=True, timeout=60)
     model = json.loads(output.read_bytes())
     assert set(model) == {'format', 'version', 'source', 'module', 'graphs'}, model.keys()
-    assert (model['format'], model['version']) == ('quint-decision-model', 2)
+    assert (model['format'], model['version']) == ('quint-decision-model', 3)
     assert model['source'] == {'sha256': sha256(source.read_bytes()).hexdigest()}
     assert [graph['title'] for graph in model['graphs']] == list(names)
     return model
@@ -65,6 +65,19 @@ if __name__ == '__main__':
     target_hash = sha256(source.with_name('policy.qnt').read_bytes()).hexdigest()
     assert links == [{
         'text': 'remote::allowed', 'position': {'line': 6, 'column': 8},
-        'definition_target': {'path': 'policy.qnt', 'line': 2, 'sha256': target_hash},
+        'definition_target': {'path': 'policy.qnt', 'line': 2, 'column': 11, 'sha256': target_hash},
     }, {'text': 'ok', 'position': {'line': 6, 'column': 24}}], links
-    print('Imported occurrences and destination fingerprints passed.')
+    directory = work / 'unicode-import'
+    directory.mkdir()
+    caller = directory / 'caller.qnt'
+    caller.write_bytes(source.read_bytes())
+    policy = source.with_name('policy.qnt').read_text(encoding='utf-8')
+    prefix = '  /* é😀 */ pure def '
+    policy = policy.replace('  pure def allowed', prefix + 'allowed').replace('\n', '\r\n').encode('utf-8')
+    caller.with_name('policy.qnt').write_bytes(policy)
+    model = export(caller, work / 'unicode-import-projection.json', 'review')
+    [target] = [part['definition_target'] for part in model['graphs'][0]['tree']['guard']
+                if 'definition_target' in part]
+    assert target == {'path': 'policy.qnt', 'line': 2, 'column': len(prefix.encode('utf-8')),
+                      'sha256': sha256(policy).hexdigest()}, target
+    print('Imported occurrences, destination byte positions and fingerprints passed.')

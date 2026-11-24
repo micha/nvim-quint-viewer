@@ -13,7 +13,7 @@ SPEC = ROOT / 'spec/graph_import_hover.qnt'
 FIXTURE = ROOT / 'tests/fixtures/graph_import_hover'
 HISTORIES = {'freshImportedHoverTest', 'freshLocalHoverTest', 'dirtyCallerRefusesImportedHoverTest',
              'movedPolicyRefusesImportedHoverTest', 'dirtyPolicyRefusesImportedHoverTest',
-             'movedPolicyDoesNotBlockLocalHoverTest', 'importedReferencesDoNothingTest'}
+             'movedPolicyDoesNotBlockLocalHoverTest'}
 
 
 def replay(directory, worktree):

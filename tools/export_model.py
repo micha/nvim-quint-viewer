@@ -79,8 +79,8 @@ def load_ir(quint, source, module_name, raw, cursor, names):
 
         parsed, index = parse()
         files = {Path(path) for path in index['sourceIndex'].values()}
-        fingerprints = {path: sha256(raw if path == source else path.read_bytes()).hexdigest()
-                        for path in files}
+        contents = {path: raw if path == source else path.read_bytes() for path in files}
+        fingerprints = {path: sha256(data).hexdigest() for path, data in contents.items()}
         if files - {source}:
             # The first parse discovers imports. Parse again after capturing
             # their fingerprints so an old map isn't paired with new bytes.
@@ -104,18 +104,22 @@ def load_ir(quint, source, module_name, raw, cursor, names):
         for path, fingerprint in fingerprints.items():
             if sha256(path.read_bytes()).hexdigest() != fingerprint:
                 raise ValueError('Quint source changed while building the graph; run :QuintView again')
-        return module['name'], names, definitions, offsets, checked, review_targets(parsed, index, source, fingerprints)
+        targets = review_targets(parsed, index, source, contents, fingerprints)
+        return module['name'], names, definitions, offsets, checked, targets
 
 
-def review_targets(parsed, index, source, fingerprints):
+def review_targets(parsed, index, source, contents, fingerprints):
+    lines = {file: raw.decode('utf-8').split('\n') for file, raw in contents.items()}
     targets = {}
     for use, binding in parsed['table'].items():
         span = index['map'].get(str(binding['id']))
         if use in index['map'] and span:
             file_id, start, _ = span
             file = Path(index['sourceIndex'][str(file_id)])
+            line = lines[file][start['line']]
+            column = len(line[:start['col']].encode('utf-8'))
             targets[use] = dict(path=relpath(file, source.parent), line=start['line'] + 1,
-                                sha256=fingerprints[file])
+                                column=column, sha256=fingerprints[file])
     return targets
 
 
@@ -173,7 +177,7 @@ def main():
         index = Index(definitions, offsets, text, checked['table'], definition_targets)
         exporter = Exporter(definitions, index)
         model = {
-            'format': 'quint-decision-model', 'version': 2, 'module': module,
+            'format': 'quint-decision-model', 'version': 3, 'module': module,
             'source': {'sha256': sha256(raw).hexdigest()},
             'graphs': [exporter.graph(name) for name in names],
         }

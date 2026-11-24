@@ -19,10 +19,9 @@ module graph_import_hover {
   pure val editPolicyDiskRequest = { op: "editPolicyDisk", arg: "" }
   pure val editPolicyBufferRequest = { op: "editPolicyBuffer", arg: "" }
   pure val hoverRequest = { op: "hover", arg: "" }
-  pure val referencesRequest = { op: "references", arg: "" }
   pure val calls = Set(selectImport, selectLocal)
   pure val edits = Set(editCallerRequest, editPolicyDiskRequest, editPolicyBufferRequest)
-  pure val requests = calls.union(edits).union(Set(showRequest, hoverRequest, referencesRequest))
+  pure val requests = calls.union(edits).union(Set(showRequest, hoverRequest))
 
   pure val sourceView: View = {
     windows: 1, focus: "caller.qnt", atOrigin: false, modifiable: true,
@@ -68,26 +67,20 @@ module graph_import_hover {
       ...session, request: hoverRequest, phase: "preview", view: preview(importedCall),
     },
   }
-  action importedReferences = all {
-    session.phase == "call",
-    importedCall,
-    session' = { ...session, request: referencesRequest, phase: "unsupported", view: graphView(true) },
-  }
   action perform(request: Request): bool = any {
     all { request == showRequest, showGraph },
     all { calls.contains(request), positionOnCall(request) },
     all { edits.contains(request), editSource(request) },
     all { request == hoverRequest, lookupHover },
-    all { request == referencesRequest, importedReferences },
   }
   action step = any {
     { nondet request = requests.oneOf(); perform(request) },
-    all { Set("rejected", "preview", "unsupported").contains(session.phase), session' = session },
+    all { Set("rejected", "preview").contains(session.phase), session' = session },
   }
 
   def observationMatches(observed: View): bool = session.view == observed
 
-  val lookupsKeepReadOnlyGraphAtOrigin = Set(hoverRequest, referencesRequest).contains(session.request) implies all {
+  val lookupsKeepReadOnlyGraphAtOrigin = (session.request == hoverRequest) implies all {
     session.view.focus == "graph", session.view.atOrigin, not(session.view.modifiable),
   }
   val freshHoverUsesCallerOccurrenceAndScopedDocs = (session.request == hoverRequest and not(staleGraph)) implies all {
@@ -98,8 +91,6 @@ module graph_import_hover {
   }
   val staleHoverWarnsWithoutRequest = (session.request == hoverRequest and staleGraph) implies
     session.view == rejectedView
-  val importedReferencesDoNothing = (session.request == referencesRequest) implies
-    (importedCall and session.view == graphView(true))
 
   run freshImportedHoverTest = init.then(perform(showRequest)).then(perform(selectImport))
     .then(perform(hoverRequest)).expect(session.phase == "preview" and freshHoverUsesCallerOccurrenceAndScopedDocs)
@@ -117,6 +108,4 @@ module graph_import_hover {
   run movedPolicyDoesNotBlockLocalHoverTest = init.then(perform(showRequest)).then(perform(selectLocal))
     .then(perform(editPolicyDiskRequest)).then(perform(hoverRequest))
     .expect(session.phase == "preview" and freshHoverUsesCallerOccurrenceAndScopedDocs)
-  run importedReferencesDoNothingTest = init.then(perform(showRequest)).then(perform(selectImport))
-    .then(perform(referencesRequest)).expect(session.phase == "unsupported" and importedReferencesDoNothing)
 }

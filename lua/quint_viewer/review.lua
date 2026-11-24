@@ -15,13 +15,29 @@ local function show_hover(result)
   lsp_util.open_floating_preview(lines, format, {focus = false})
 end
 
-local function show_references(result, client)
+local function show_references(result, client, target)
   if not vim.islist(result) or #result == 0 then
     vim.notify('No Quint references found.', vim.log.levels.INFO)
     return
   end
   local items = lsp_util.locations_to_items(result, client.offset_encoding)
-  if vim.fn.setloclist(0, {}, ' ', {title = 'Quint references', items = items}) == 0 then
+  local title = 'Quint references'
+  if target then
+    local path = vim.uv.fs_realpath(target.path)
+    -- An old use can land on the declaration's new line. Check the byte
+    -- column as well as the file and line before showing the server's list.
+    local anchored = path and vim.iter(items):any(function(item)
+      return item.lnum == target.line and item.col == target.column + 1
+        and vim.uv.fs_realpath(item.filename) == path
+    end)
+    if not anchored then
+      vim.notify('Quint language server references do not match the mapped declaration; restart the Quint LSP and try again.',
+        vim.log.levels.WARN)
+      return
+    end
+    title = title .. ' (source + imports)'
+  end
+  if vim.fn.setloclist(0, {}, ' ', {title = title, items = items}) == 0 then
     vim.cmd.lopen()
   else
     vim.notify('Could not open a location list for Quint references.', vim.log.levels.WARN)
@@ -155,11 +171,8 @@ local function show(source, path, model)
     local position, target
     for _, ref in ipairs(targets[cursor[1]] or {}) do
       if ref.col <= cursor[2] and cursor[2] < ref.end_col then
-        -- Hover queries the caller occurrence, but its answer also depends on
-        -- the imported file. Keep the target so both freshness checks run.
-        if not ref.definition_target or kind == 'definition' or kind == 'hover' then
-          position, target = ref.position, ref.definition_target
-        end
+        -- Ask at the caller occurrence. An import adds a freshness dependency.
+        position, target = ref.position, ref.definition_target
         break
       end
     end

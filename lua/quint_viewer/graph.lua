@@ -3,8 +3,8 @@ local max_fold_depth = 20 -- Neovim's native limit, including expression folds.
 
 function M.decode(text)
   local model = vim.json.decode(text)
-  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 2,
-    'expected a quint-decision-model v2 projection')
+  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 3,
+    'expected a quint-decision-model v3 projection')
   assert(type(model.source) == 'table' and type(model.source.sha256) == 'string'
     and type(model.graphs) == 'table' and type(model.module) == 'string', 'projection is missing model data')
   return model
@@ -17,8 +17,14 @@ function M.rows(model, legend)
     local refs = {}
     for _, part in ipairs(parts or {}) do
       if part.position then
+        local target = part.definition_target
+        if target then
+          local column = target.column
+          assert(type(column) == 'number' and column >= 0 and column % 1 == 0,
+            'projection has an invalid definition byte column')
+        end
         refs[#refs + 1] = {col = #text, end_col = #text + #part.text,
-          position = part.position, definition_target = part.definition_target}
+          position = part.position, definition_target = target}
       end
       text = text .. part.text
     end

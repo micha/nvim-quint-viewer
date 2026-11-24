@@ -4,8 +4,9 @@ The viewer has verified models for [source graph selection](graph_selection.qnt)
 [definition jumps from a read-only source graph](graph_navigation.qnt),
 [native branch folding](branch_folding.qnt),
 [hover and references from the source graph](graph_lookups.qnt),
-[cross-file definition jumps](graph_import.qnt), and
-[hover on imported calls](graph_import_hover.qnt). A thin interpreter
+[cross-file definition jumps](graph_import.qnt),
+[hover on imported calls](graph_import_hover.qnt), and
+[references to imported calls](graph_import_references.qnt). A thin interpreter
 drives public commands and keys and records observations. Quint judges those
 observations against the same transition rules that produced the histories.
 
@@ -41,7 +42,8 @@ with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
 explores 15 reachable states for selection, 27 for source graph navigation,
 103 for branch folding, 14 for graph hover and references, 39 for cross-file
-definition navigation, and 22 for hover on imported calls.
+definition navigation, 18 for hover on imported calls, and 64 for references
+to imported calls.
 These checks verify the models, not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
@@ -183,14 +185,14 @@ resolves to the imported policy while bare `allowed` resolves to a local
 operator with the same name and type. `K` asks the language server at the
 mapped occurrence in the caller, not at the declaration. The server's
 signature and scope-specific documentation appear in a native float without
-moving focus or the graph cursor. `grr` on the imported call remains inert.
+moving focus or the graph cursor.
 
 `K` on an imported call warns once and sends no request if the caller has an
 unsaved edit or the imported file has changed on disk or in a loaded buffer.
 An edit to the imported file alone does not block a local hover.
 
 [The model](graph_import_hover.qnt) covers one direct import, one ready server,
-at most one edit and one lookup per history. TLC checks all 22 reachable
+at most one edit and one lookup per history. TLC checks all 18 reachable
 states without a trace-length cap (the reachable depth is 5, including the
 initial state). It checks graph freshness, not whether an already-running
 server has reanalyzed a changed import after a graph rebuild. If a rebuilt
@@ -203,6 +205,45 @@ controls substitute the same-named local hover text, the local occurrence's
 request, or a real hover request in a stale rejection. Quint must reject each.
 Run `scripts/check.sh --worktree --with-lsp` with the tools above, or run just
 this replay with `python3 -B tests/replay_graph_import_hover.py --worktree`.
+
+## References to imported calls
+
+In the [references fixture](../tests/fixtures/graph_import_references), `grr`
+on `remote::allowed` requests references at that occurrence in `caller.qnt`,
+including the declaration. It focuses the graph window's native location
+list, leaving the graph read-only and at the same cursor. The list is titled
+`Quint references (source + imports)`. With Quint LSP 0.21.0 it contains both
+qualified calls in `caller.qnt` and the declaration and use in `policy.qnt`.
+It does not include the bare `allowed` call or its declaration, nor a call
+in `second.qnt`, even if that caller is open with the same attached server.
+The server searches the caller's parsed sources and imports, not the whole
+workspace. Looking up bare `allowed` still opens the local list.
+
+An unsaved caller edit, an unsaved policy edit, or a changed policy on disk
+makes the imported lookup warn once without sending a request. A policy
+edit alone does not block a local lookup. After rebuilding a graph where
+the policy moved, the server may still return old locations. A nonempty
+imported reply must include the mapped declaration file, line, and byte
+column or it warns to restart the server and does not open a list. Requiring
+the column prevents accepting an old reference that happens to be on the
+new declaration line. This check cannot detect stale locations if the
+reply still includes the correct declaration position. Restarting the
+server from the caller and rebuilding the graph gets the new locations.
+
+[TLC](#verify-and-generate-histories) checks all 64 reachable states without a
+trace-length cap (reachable depth 12, including the initial state). The
+[model](graph_import_references.qnt) covers a direct import, one ready server,
+at most one edit, and a restart after a disk move. It compares the exact
+location-list entries without requiring their order. Empty replies, changes
+while requests are in flight, and navigation within an open list are
+outside this slice.
+
+The [replay](../tests/replay_graph_import_references.py) uses the real server
+and the graph's public key. Negative controls substitute the same-named
+local results, add the other caller's use, report a request from a stale
+graph, or show the old server's list after a rebuild. Quint must reject each.
+Run `scripts/check.sh --worktree --with-lsp` with the tools above, or run
+just `python3 -B tests/replay_graph_import_references.py --worktree`.
 
 ## Native branch folding
 

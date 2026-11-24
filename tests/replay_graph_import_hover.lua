@@ -115,7 +115,6 @@ local actions = {
     assert(output:close())
   end,
   hover = function() press('K') end,
-  references = function() press('grr') end,
 }
 
 local function observe()
