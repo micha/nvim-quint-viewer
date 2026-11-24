@@ -42,3 +42,4 @@ QMODEL_CASE=invalid run_viewer "$work/invalid.qmodel.json"
 printf '\n// Edit after export.\n' >>"$work/source/approval.qnt"
 QMODEL_CASE=stale run_viewer "$work/approval.qmodel.json"
 printf 'Deterministic export and Neovim viewer checks passed.\n'
+python3 -B "$root/tests/replay_source_navigation.py" "$@"

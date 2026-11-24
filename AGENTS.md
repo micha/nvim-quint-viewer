@@ -38,8 +38,8 @@ behavior-preserving refactors or cosmetic edits.
 Verification checks the design; replay checks the implementation on the
 histories exercised. Keep them separate, and keep the existing exporter and
 installation checks. Verification and replay tooling are development-only and
-must not depend on a DML checkout. The verification and trace replay harnesses
-have not been implemented yet.
+must not depend on a DML checkout. See the [specification roadmap](spec/README.md)
+for the separate model verification and plugin replay commands.
 
 ## Validation
 

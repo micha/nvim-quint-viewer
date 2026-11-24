@@ -27,10 +27,24 @@
             npmBuildScript = "compile";
             npmFlags = [ "--ignore-scripts" ];
           };
+          # Quint 0.33.1 uses this distribution for both verification backends.
+          apalacheVersion = "0.62.4";
+          apalacheDist = pkgs.fetchurl {
+            url = "https://github.com/apalache-mc/apalache/releases/download/v${apalacheVersion}/apalache.tgz";
+            hash = "sha256-ishIhCLDDVUnNbrhG5Ki0BTY4C6GCHAqzAj5otipq7I=";
+          };
+          apalacheCache = pkgs.runCommand "quint-apalache-${apalacheVersion}" {} ''
+            mkdir -p "$out/apalache-dist-${apalacheVersion}"
+            tar -xf ${apalacheDist} -C "$out/apalache-dist-${apalacheVersion}"
+          '';
         in
         {
           default = pkgs.mkShell {
             packages = [ pkgs.git pkgs.neovim pkgs.python3 quint ];
+          };
+          spec = pkgs.mkShell {
+            packages = [ quint pkgs.jdk_headless ];
+            QMODEL_APALACHE_CACHE = apalacheCache;
           };
         });
     };
