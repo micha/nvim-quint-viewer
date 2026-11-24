@@ -27,15 +27,15 @@ export_model() {
   python3 -B "$root/tools/export_model.py" "$work/source/approval.qnt" "$@"
 }
 
-export_model review -o "$work/approval.qmodel.json"
-export_model review -o "$work/duplicate.qmodel.json"
-cmp "$work/approval.qmodel.json" "$work/duplicate.qmodel.json"
-if export_model missing -o "$work/missing.qmodel.json" >"$work/errors" 2>&1; then
+export_model review -o "$work/approval.json"
+export_model review -o "$work/duplicate.json"
+cmp "$work/approval.json" "$work/duplicate.json"
+if export_model missing -o "$work/missing.json" >"$work/errors" 2>&1; then
   printf 'Export of a nonexistent definition unexpectedly passed\n' >&2
   exit 1
 fi
 grep -q 'no operator or value named' "$work/errors"
-test ! -e "$work/missing.qmodel.json"
+test ! -e "$work/missing.json"
 python3 -B "$root/tests/export_source_review.py" "$work"
 
 printf 'Deterministic graph export checks passed.\n'

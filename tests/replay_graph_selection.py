@@ -1,7 +1,6 @@
-"""Replay source selection and the retired artifact entry point in Neovim."""
+"""Replay source graph selection in Neovim."""
 
 import argparse
-import json
 import shutil
 import subprocess
 import tempfile
@@ -16,17 +15,10 @@ HISTORIES = {
     'definitionNameTest', 'sameLineAfterUnicodeTest', 'nestedLocalUsesOuterTest',
     'moduleHeaderIsNotDefinitionTest', 'outsideDefinitionTest', 'namedDefinitionsInOrderTest',
     'namedDefinitionInSecondModuleTest', 'ambiguousNamedModuleTest', 'nameDoesNotCrossModulesTest',
-    'soleModuleFallbackTest', 'legacyArtifactIsOrdinaryJsonTest', 'filenameFallbackTest',
+    'soleModuleFallbackTest', 'filenameFallbackTest',
     'cursorModuleBeatsFilenameTest', 'variantIsNotADefinitionTest', 'namedDefinitionInMacFileTest',
 }
 CONTROL = 'wrongSameLineDefinitionRejectedTest'
-LEGACY = {
-    'format': 'quint-decision-model', 'version': 1, 'module': 'legacy',
-    'source': {'path': 'missing.qnt', 'sha256': '0' * 64}, 'symbols': {}, 'uses': {},
-    'graphs': [{'id': 'decide', 'title': 'decide', 'tree': {
-        'bindings': [], 'expression': [{'text': '1'}],
-    }}],
-}
 
 
 def replay(directory, worktree):
@@ -53,11 +45,8 @@ def replay(directory, worktree):
             if use_mac:
                 text = b'\n' + text.split(b'\n', 1)[1]
             source.write_bytes(text.replace(b'\n', b'\r' if use_mac else b'\r\n'))
-        legacy = case / 'legacy.qmodel.json'
-        if history == 'legacyArtifactIsOrdinaryJsonTest':
-            legacy.write_text(json.dumps(LEGACY) + '\n', encoding='utf-8')
         views = observe(history, requests, case, source, worktree, 'replay_graph_selection.lua',
-                        QMODEL_LEGACY=str(legacy), QMODEL_MAC='1' if use_mac else '')
+                        QMODEL_MAC='1' if use_mac else '')
         replays[history] = requests, views
         name = 'observed' + history[0].upper() + history[1:]
         tests.append(verdict_test(name, requests, views))

@@ -34,12 +34,12 @@ histories() {
   done
 }
 
-verify graph_selection graphIsReadOnly cursorUsesEnclosingDefinition rejectionKeepsSource legacyIsOrdinaryJson
+verify graph_selection graphIsReadOnly cursorUsesEnclosingDefinition rejectionKeepsSource
 histories graph_selection definitionNameTest sameLineAfterUnicodeTest nestedLocalUsesOuterTest \
   moduleHeaderIsNotDefinitionTest outsideDefinitionTest namedDefinitionsInOrderTest \
   namedDefinitionInSecondModuleTest ambiguousNamedModuleTest nameDoesNotCrossModulesTest \
   soleModuleFallbackTest variantIsNotADefinitionTest filenameFallbackTest cursorModuleBeatsFilenameTest \
-  namedDefinitionInMacFileTest legacyArtifactIsOrdinaryJsonTest
+  namedDefinitionInMacFileTest
 
 verify graph_navigation singleWindow graphIsReadOnly freshFollowReachesDefinition \
   staleFollowKeepsOrigin backRestoresOrigin closeYesBranchKeepsGraph

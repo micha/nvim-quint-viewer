@@ -23,9 +23,8 @@ in order. Outside a module it falls back to the only local module, or the
 one matching the filename. If neither rule selects a module, or if a name
 is not defined in the selected module, the command does not switch buffers.
 
-The retired `*.qmodel.json` entry point is modeled separately: opening a
-valid old export leaves ordinary JSON in the existing window. Each history
-covers one command from a clean session, without a language server.
+Each history covers one command from a clean session, without a language
+server.
 
 ## Verify and generate histories
 
@@ -39,7 +38,7 @@ The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 0.62.4 distribution that Quint uses for TLC. The script runs `quint verify`
 with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
-explores 16 reachable states for selection, 27 for source graph navigation,
+explores 15 reachable states for selection, 27 for source graph navigation,
 103 for branch folding, 14 for graph hover and references, and 39 for
 cross-file definition navigation.
 These checks verify the models, not the plugin implementation.

@@ -43,11 +43,6 @@ local actions = {
     place(point)
     api.nvim_cmd({cmd = 'QuintView', args = names[point]}, {})
   end,
-  openLegacy = function()
-    edit(assert(vim.env.QMODEL_LEGACY))
-    -- The old autocommand scheduled the graph after BufReadPost.
-    vim.wait(100, function() return vim.bo.filetype == 'qmodelgraph' end)
-  end,
 }
 
 local function observe()
@@ -60,8 +55,6 @@ local function observe()
     for i = 3, #lines do
       if lines[i]:match('^%S') then definitions[#definitions + 1] = lines[i] end
     end
-  elseif api.nvim_buf_get_name(0) == vim.env.QMODEL_LEGACY and vim.bo.buftype == '' then
-    focus = 'json'
   end
   local notices = {}
   for _, text in ipairs(vim.g.qmodel_test_messages) do

@@ -43,17 +43,14 @@ module graph_selection {
     any {
       request.op == "cursor" and cursorPoints.contains(request.arg),
       request.op == "named" and namedPoints.contains(request.arg),
-      request == { op: "openLegacy", arg: "" },
     },
-    val view = if (request.op == "cursor") byCursor(request.arg)
-      else if (request.op == "named") byName(request.arg) else plain("json", List())
+    val view = if (request.op == "cursor") byCursor(request.arg) else byName(request.arg)
     session' = { request: request, view: view },
   }
 
   action step = any {
     { nondet arg = cursorPoints.oneOf(); perform({ op: "cursor", arg: arg }) },
     { nondet arg = namedPoints.oneOf(); perform({ op: "named", arg: arg }) },
-    perform({ op: "openLegacy", arg: "" }),
   }
 
   def observationMatches(observed: View): bool = session.view == observed
@@ -71,10 +68,6 @@ module graph_selection {
   val rejectionKeepsSource = session.view.notices.length() > 0 implies all {
     session.view.focus == "source", session.view.sameWindow, session.view.cursorKept,
     session.view.definitions == List(), session.view.notices.length() == 1,
-  }
-  val legacyIsOrdinaryJson = session.request.op == "openLegacy" implies all {
-    session.view.focus == "json", not(session.view.readOnly), session.view.sameWindow,
-    session.view.notices == List(),
   }
 
   run definitionNameTest = init.then(perform({ op: "cursor", arg: "firstName" }))
@@ -105,6 +98,4 @@ module graph_selection {
     .expect(session.view == graph("Second", List("same")))
   run namedDefinitionInMacFileTest = init.then(perform({ op: "named", arg: "secondHeaderMac" }))
     .expect(session.view == graph("Second", List("same")))
-  run legacyArtifactIsOrdinaryJsonTest = init.then(perform({ op: "openLegacy", arg: "" }))
-    .expect(session.view == plain("json", List()))
 }

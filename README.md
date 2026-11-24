@@ -25,8 +25,9 @@ For live plugin development instead, prepend the checkout to `runtimepath`.
 
 ## View a saved Quint file
 
-Put Python 3.10+ and `quint` on `PATH`. For graph navigation and lookups, install
-[`quint-language-server`](https://www.npmjs.com/package/@informalsystems/quint-language-server)
+Put Python 3.10+ and `quint` on `PATH` to render a graph. For navigation and
+lookups, install the
+[Quint language server](https://www.npmjs.com/package/@informalsystems/quint-language-server)
 and configure Neovim to attach it to Quint source buffers, if it doesn't
 already. If server `0.21.0` fails with `Cannot find module 'lodash'`, install
 `lodash` into the same npm prefix as the server.
@@ -85,14 +86,6 @@ cursor inside one. Modules don't have to match the filename.
 `gd`, `K`, and `grr` work on indexed references when a single attached LSP
 client supports the requested operation. `gd` also follows imported
 definitions; imported links do not yet support `K` or `grr`.
-
-## Migrating from offline exports
-
-`*.qmodel.json` files now open as ordinary JSON. The offline inspector and
-`dml-refs` export profile were retired; use `:QuintView` from the saved Quint
-source instead. Graph rendering itself does not require an LSP server. If you
-still need the offline workflow, use the [last compatible commit
-(`8ff9ce7`)](https://github.com/micha/nvim-quint-viewer/tree/8ff9ce7).
 
 ## Develop
 
