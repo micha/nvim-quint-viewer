@@ -189,6 +189,12 @@ local actions = {
   end,
   back = function() press('<C-o>') end,
   forward = function() press('<C-i>') end,
+  toggleView = function() api.nvim_cmd({cmd = 'QuintView'}, {}) end,
+  revisitGraph = function()
+    local origin = assert(origins[#origins])
+    api.nvim_cmd({cmd = 'buffer', args = {tostring(origin.buf)}, mods = {hide = true, keepjumps = true}}, {})
+    api.nvim_win_set_cursor(0, origin.cursor)
+  end,
   selectSourceCall = function(symbol) select_occurrence(symbol, true) end,
   pressSourceGd = function() press('gd') end,
 }

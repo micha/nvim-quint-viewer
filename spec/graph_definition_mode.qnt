@@ -32,8 +32,11 @@ module graph_definition_mode {
   pure val forwardRequest = { op: "forward", arg: "" }
   pure val sourceSelect = { op: "selectSourceCall", arg: "allowed" }
   pure val sourceFollow = { op: "pressSourceGd", arg: "" }
+  pure val toggleRequest = { op: "toggleView", arg: "" }
+  pure val revisitRequest = { op: "revisitGraph", arg: "" }
   pure val requests = selections.union(edits).union(Set(showRequest, graphRequest, rawRequest,
-    deliverRequest, wrongReply, backRequest, forwardRequest, sourceSelect, sourceFollow))
+    deliverRequest, wrongReply, backRequest, forwardRequest, sourceSelect, sourceFollow,
+    toggleRequest, revisitRequest))
 
   pure val staleGraph = { level: "warn", reason: "staleGraph" }
   pure val staleDefinition = { level: "warn", reason: "staleDefinition" }
@@ -75,6 +78,10 @@ module graph_definition_mode {
   }
   pure def target(mode: str, occurrence: str): View =
     if (mode == "gd") graphTarget(occurrence) else rawTarget(occurrence)
+
+  pure def graphBacking(occurrence: str): View =
+    if (occurrence == "helper") { ...sourceView, focus: "policy.qnt", position: { line: 3, column: 11 } }
+    else { ...rawTarget(occurrence), atTarget: false, historyChanged: false }
 
   val atOrigin = origin(session.occurrence)
   val destination = target(session.mode, session.occurrence)
@@ -151,6 +158,26 @@ module graph_definition_mode {
       ...session, request: forwardRequest, phase: "target", view: destination
     }
   }
+  action toggleView = any {
+    all {
+      session.phase == "target", session.mode == "gd",
+      session' = { ...session, request: toggleRequest, phase: "toggled", view: graphBacking(session.occurrence) },
+    },
+    all {
+      // One pending reply held while leaving, then revisiting the same site.
+      session.phase == "waiting", session.mode == "gd", session.edit == "", session.occurrence == "allowed",
+      session' = { ...session, request: toggleRequest, phase: "toggledWhileWaiting",
+        view: { ...sourceView, heldReply: true } },
+    },
+  }
+  action revisitGraph = all {
+    session.phase == "toggledWhileWaiting",
+    session' = { ...session, request: revisitRequest, phase: "revisited", view: { ...atOrigin, heldReply: true } },
+  }
+  action ignoreCanceledReply = all {
+    session.phase == "revisited",
+    session' = { ...session, request: deliverRequest, phase: "canceled", view: atOrigin },
+  }
   // A user's existing source-buffer LSP map is outside the viewer, but must
   // still land in source after a graph gD has returned to that buffer.
   action selectSourceCall = all {
@@ -175,10 +202,13 @@ module graph_definition_mode {
     all { request == forwardRequest, forward },
     all { request == sourceSelect, selectSourceCall },
     all { request == sourceFollow, followSource },
+    all { request == toggleRequest, toggleView },
+    all { request == revisitRequest, revisitGraph },
+    all { request == deliverRequest, ignoreCanceledReply },
   }
   action step = any {
     { nondet request = requests.oneOf() perform(request) },
-    all { Set("advised", "rejected", "sourceDefinition").contains(session.phase), session' = session },
+    all { Set("advised", "rejected", "sourceDefinition", "toggled", "canceled").contains(session.phase), session' = session },
   }
 
   def observationMatches(observed: View): bool = session.view == observed
@@ -193,7 +223,7 @@ module graph_definition_mode {
     session.view == { ...atOrigin, notices: List(useRaw) }
   val wrongScopeKeepsOrigin = (session.request == wrongReply) implies
     session.view == { ...atOrigin, notices: List(staleDefinition) }
-  val freshReplyPreservesMode = (session.request == deliverRequest and fresh) implies all {
+  val freshReplyPreservesMode = (session.request == deliverRequest and fresh and session.phase != "canceled") implies all {
     session.view == destination,
     (session.mode == "gd") implies renderable and not(session.view.modifiable),
     (session.mode == "gD") implies session.view.modifiable,
@@ -206,6 +236,18 @@ module graph_definition_mode {
   }
 
   val rawGdRemainsInSource = (session.request == sourceFollow) implies session.view == sourceDefinition
+  val toggleOpensBackingSource = session.request == toggleRequest implies session.view ==
+    (if (session.phase == "toggledWhileWaiting") { ...sourceView, heldReply: true } else graphBacking(session.occurrence))
+  val canceledReplyKeepsRevisitedGraph = session.phase == "canceled" implies session.view == atOrigin
+
+  run toggleImportedGraphTest = init.then(perform(showRequest)).then(perform(importedCall))
+    .then(perform(graphRequest)).then(perform(deliverRequest)).expect(session.view.focus == "policy:allowed")
+    .then(perform(toggleRequest)).expect(toggleOpensBackingSource and session.view.focus == "policy.qnt")
+  run toggleCancelsPendingDefinitionTest = init.then(perform(showRequest)).then(perform(localCall))
+    .then(perform(graphRequest)).expect(session.view.heldReply)
+    .then(perform(toggleRequest)).expect(toggleOpensBackingSource and session.view.focus == "caller.qnt")
+    .then(perform(revisitRequest)).expect(session.view.atOrigin and session.view.heldReply)
+    .then(perform(deliverRequest)).expect(canceledReplyKeepsRevisitedGraph and not(session.view.heldReply))
 
   run localGraphAndHistoryTest = init.then(perform(showRequest)).then(perform(localCall))
     .then(perform(graphRequest)).expect(followWaitsAtOrigin and session.view.heldReply)

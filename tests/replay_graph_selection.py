@@ -12,13 +12,12 @@ from replay_support import (ROOT, check_rejection, check_verdicts, observe, quin
 SPEC = ROOT / 'spec/graph_selection.qnt'
 FIXTURE = ROOT / 'tests/fixtures/graph_selection.qnt'
 HISTORIES = {
-    'definitionNameTest', 'sameLineAfterUnicodeTest', 'nestedLocalUsesOuterTest',
-    'moduleHeaderIsNotDefinitionTest', 'outsideDefinitionTest', 'namedDefinitionsInOrderTest',
-    'namedDefinitionInSecondModuleTest', 'ambiguousNamedModuleTest', 'nameDoesNotCrossModulesTest',
-    'soleModuleFallbackTest', 'filenameFallbackTest',
-    'cursorModuleBeatsFilenameTest', 'variantIsNotADefinitionTest', 'namedDefinitionInMacFileTest',
+    'definitionNameTest', 'sameLineAfterUnicodeTest', 'nestedLocalTest',
+    'moduleHeaderTest', 'outsideDefinitionTest', 'variantTest', 'declarationOnlyFileTest', 'destructuringAsSourceTest',
+    'dirtySourceToggleAndRebuildTest', 'namedDefinitionsInOrderTest', 'namedDefinitionInSecondModuleTest',
+    'ambiguousNamedModuleTest', 'nameDoesNotCrossModulesTest', 'soleModuleFallbackTest',
+    'filenameFallbackTest', 'cursorModuleBeatsFilenameTest', 'namedDefinitionInMacFileTest',
 }
-CONTROL = 'wrongSameLineDefinitionRejectedTest'
 
 
 def replay(directory, worktree):
@@ -38,6 +37,11 @@ def replay(directory, worktree):
         source = case / ('First.qnt' if filename_matches else FIXTURE.name)
         if history == 'soleModuleFallbackTest':
             source.write_text('// Before the only module\nmodule Only { pure val decide = 1 }\n', encoding='utf-8')
+        elif history == 'declarationOnlyFileTest':
+            source.write_text('module Only {\n  type Choice = | Some(int) | None\n}\n', encoding='utf-8')
+        elif history == 'destructuringAsSourceTest':
+            source.write_text('module Pattern {\n  pure val (left, right) = (1, 2)\n'
+                              '  pure val total = { val (a, b) = (left, right); a + b }\n}\n', encoding='utf-8')
         else:
             # Neovim strips line endings; Quint indexes the saved text. The
             # Quint lexer needs LF to terminate the fixture's line comment.
@@ -52,15 +56,23 @@ def replay(directory, worktree):
         tests.append(verdict_test(name, requests, views))
         names.add(name)
 
-    requests, correct = replays['sameLineAfterUnicodeTest']
-    _, wrong = replays['definitionNameTest']
-    # The real graph for the first definition would be plausible if selection
-    # ignored columns. It must fail the same oracle as the real replay.
-    tests.append(verdict_test(CONTROL, requests, [correct[0], wrong[1]]))
+    def control(name, history, step, **changed):
+        requests, views = replays[history]
+        mutated = views.copy()
+        mutated[step] = {**views[step], **changed}
+        tests.append(verdict_test(name, requests, mutated))
+        return name
+
+    controls = [
+        control('missingModuleRejectedTest', 'outsideDefinitionTest', 1,
+                definitions=['First:same', 'First:other', 'First:after']),
+        control('wrongToggleCursorRejectedTest', 'sameLineAfterUnicodeTest', -1, position='other'),
+    ]
     verdicts = directory / 'graph_selection_verdicts.qnt'
     verdicts.write_text('\n\n'.join(tests) + '\n}\n', encoding='utf-8')
     check_verdicts(verdicts, directory / 'verdicts', names)
-    check_rejection(verdicts, CONTROL)
+    for name in controls:
+        check_rejection(verdicts, name)
 
 
 def main():

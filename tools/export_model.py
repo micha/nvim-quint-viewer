@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Export selected Quint definitions as a deterministic decision model."""
+"""Export Quint definitions as a deterministic decision model."""
 
 import argparse
 from hashlib import sha256
@@ -44,26 +44,61 @@ def select_module(modules, offsets, module_name, stem, cursor, names):
 def select_at_cursor(definitions, offsets, cursor, declaration_only=False):
     no_match = ('no top-level operator or value starts at the declaration position'
                 if declaration_only else NO_DEFINITION)
-    # The compiler also emits `def`s for variant constructors. Cursor selection
-    # should not mistake the text of a type declaration for an operator body.
-    for node in definitions.values():
-        if node['kind'] == 'typedef':
-            _, start, end = offsets[str(node['id'])]
-            if start['index'] <= cursor <= end['index']:
-                raise ValueError(no_match)
-    names = []
-    for name, node in definitions.items():
-        if node['kind'] != 'def':
-            continue
+    matches = []
+    for node in definitions:
         # A definition's ID maps to its name, not its whole declaration. The
         # expression span supplies the other bound (including nested bindings).
         start = offsets[str(node['id'])][1]['index']
         end = start if declaration_only else offsets[str(node['expr']['id'])][2]['index']
         if start <= cursor <= end:
-            names.append(name)
-    if len(names) != 1:
+            matches.append(node)
+    if len(matches) != 1:
         raise ValueError(no_match)
-    return names
+    return matches
+
+
+def is_destructuring(node, spans):
+    if node['kind'] != 'def' or node['qualifier'] not in ('val', 'pureval'):
+        return False
+    declaration = spans.get(str(node['id']))
+    expression = spans.get(str(node['expr']['id']))
+    # Ordinary defs map to a name token. A destructuring temp instead maps
+    # to the entire declaration, strictly enclosing the mapped RHS.
+    return (declaration is not None and expression is not None and declaration[0] == expression[0]
+            and declaration[1]['index'] < expression[1]['index']
+            and expression[2]['index'] <= declaration[2]['index'])
+
+
+def select_graphs(modules, offsets, renderable, patterns, module_name, stem, cursor, names, declaration_only):
+    def source_order(node):
+        return offsets[str(node['id'])][1]['index']
+
+    if names or cursor is not None:
+        modules = [select_module(modules, offsets, module_name, stem, cursor, names)]
+    else:
+        # Quint's IR need not list modules or declarations in source order.
+        modules = sorted(modules, key=source_order)
+
+    selections = []
+    for module in modules:
+        definitions = {node['name']: node for node in module['declarations']
+                       if 'name' in node and str(node['id']) in offsets}
+        graphable = {name: node for name, node in definitions.items() if node['id'] in renderable}
+        if names:
+            try:
+                selected = [graphable[name] for name in names]
+            except KeyError as error:
+                raise ValueError(f'no operator or value named {error.args[0]!r} in the selected module') from None
+        elif cursor is not None:
+            selected = select_at_cursor(graphable.values(), offsets, cursor, declaration_only)
+        else:
+            selected = sorted((node for node in definitions.values()
+                               if node['id'] in renderable or node['id'] in patterns), key=source_order)
+        if selected:
+            selections.append((module['name'], definitions, selected))
+    if not selections:
+        raise ValueError('no top-level operators or values in this file')
+    return selections
 
 
 def load_ir(quint, source, module_name, raw, cursor, names, declaration_only):
@@ -93,12 +128,9 @@ def load_ir(quint, source, module_name, raw, cursor, names, declaration_only):
         source_ids = {int(key) for key, path in index['sourceIndex'].items() if Path(path).resolve() == source}
         offsets = {key: span for key, span in index['map'].items() if span[0] in source_ids}
         modules = [module for module in parsed['modules'] if str(module['id']) in offsets]
-        module = select_module(modules, offsets, module_name, source.stem, cursor, names)
-        definitions = {node['name']: node for node in module['declarations'] if 'name' in node}
-        if any(str(node['id']) not in offsets for node in definitions.values()):
-            raise ValueError('selected module must be defined in the input file')
-        if not names:
-            names = select_at_cursor(definitions, offsets, cursor, declaration_only)
+        renderable, patterns = source_definition_ids(parsed['modules'], index['map'])
+        selections = select_graphs(modules, offsets, renderable, patterns, module_name, source.stem,
+                                   cursor, names, declaration_only)
         subprocess.run([quint, 'typecheck', str(source), '--out', str(ir)], check=True)
         checked = json.loads(ir.read_text())
         if checked.get('errors'):
@@ -106,16 +138,16 @@ def load_ir(quint, source, module_name, raw, cursor, names, declaration_only):
         for path, fingerprint in fingerprints.items():
             if sha256(path.read_bytes()).hexdigest() != fingerprint:
                 raise ValueError('Quint source changed while building the graph; run :QuintView again')
-        targets = review_targets(parsed, index, source, contents)
+        targets = review_targets(parsed, index, source, contents, renderable)
         # A binding points at its final declaration, not every re-export on
         # the way there. Retain the whole external input set reported by Quint.
         imports = {relpath(path, source.parent): fingerprint
                    for path, fingerprint in fingerprints.items() if path != source}
-        return module['name'], names, definitions, offsets, checked, targets, imports
+        return selections, offsets, checked, targets, imports
 
 
 def source_definition_ids(modules, spans):
-    ids = set()
+    renderable, patterns = set(), set()
     for module in modules:
         declarations = module['declarations']
         typedefs = [spans[str(node['id'])] for node in declarations
@@ -128,13 +160,12 @@ def source_definition_ids(modules, spans):
             # Synthetic variant constructors are not standalone source definitions.
             if not any(file_id == file and begin['index'] <= start['index'] <= end['index']
                        for file, begin, end in typedefs):
-                ids.add(node['id'])
-    return ids
+                (patterns if is_destructuring(node, spans) else renderable).add(node['id'])
+    return renderable, patterns
 
 
-def review_targets(parsed, index, source, contents):
+def review_targets(parsed, index, source, contents, renderable):
     lines = {file: raw.decode('utf-8').split('\n') for file, raw in contents.items()}
-    renderable = source_definition_ids(parsed['modules'], index['map'])
     targets = {}
     for use, binding in parsed['table'].items():
         span = index['map'].get(str(binding['id']))
@@ -149,8 +180,7 @@ def review_targets(parsed, index, source, contents):
 
 
 class Exporter:
-    def __init__(self, definitions, index):
-        self.definitions = definitions
+    def __init__(self, index):
         self.index = index
 
     def fragments(self, node):
@@ -162,6 +192,10 @@ class Exporter:
         bindings = []
         while node['kind'] == 'let':
             local = node['opdef']
+            if is_destructuring(local, self.index.offsets):
+                # Render the enclosing let as written rather than walking
+                # the generated bindings whose definitions have no spans.
+                return dict(bindings=bindings, expression=self.fragments(node))
             bindings.append(dict(name=local['name'], expr=self.fragments(local['expr'])))
             node = node['expr']
         data = dict(bindings=bindings)
@@ -170,20 +204,20 @@ class Exporter:
             return dict(data, guard=self.fragments(guard), yes=self.tree(yes), no=self.tree(no))
         return dict(data, expression=self.fragments(node))
 
-    def graph(self, name):
-        definition = self.definitions.get(name)
-        if not definition or definition['kind'] != 'def':
-            raise ValueError(f'no operator or value named {name!r} in the selected module')
+    def graph(self, definition):
+        if is_destructuring(definition, self.index.offsets):
+            return dict(title='Destructuring', tree=dict(bindings=[], expression=self.fragments(definition)))
         node = definition['expr']
         if node['kind'] == 'lambda':
             node = node['expr']
-        return dict(title=name, tree=self.tree(node))
+        return dict(title=definition['name'], tree=self.tree(node))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
-    parser.add_argument('definitions', nargs='*', help='operators or values to visualize, in display order')
+    parser.add_argument('definitions', nargs='*',
+                        help='operators or values to visualize, in display order (default: all in source order)')
     parser.add_argument('-o', '--output', required=True, type=Path)
     parser.add_argument('--module', help='explicit module in the source file')
     parser.add_argument('--cursor', type=int, metavar='BYTE_OFFSET',
@@ -194,21 +228,23 @@ def main():
     args = parser.parse_args()
     if args.declaration and (args.definitions or args.cursor is None):
         parser.error('--declaration requires a cursor position and no definition names')
-    if not args.definitions and args.cursor is None:
-        parser.error('provide definition names or a cursor position')
+    if args.module is not None and not args.definitions and args.cursor is None:
+        parser.error('--module requires definition names or a cursor position')
     source = args.source.resolve()
     try:
         raw = source.read_bytes()
         text = raw.decode('utf-8')
         cursor = cursor_index(raw, args.cursor) if args.cursor is not None else None
-        module, names, definitions, offsets, checked, definition_targets, imports = load_ir(
+        selections, offsets, checked, definition_targets, imports = load_ir(
             args.quint, source, args.module, raw, cursor, args.definitions, args.declaration)
-        index = Index(definitions, offsets, text, checked['table'], definition_targets)
-        exporter = Exporter(definitions, index)
+        modules = []
+        for name, definitions, selected in selections:
+            index = Index(definitions, offsets, text, checked['table'], definition_targets)
+            exporter = Exporter(index)
+            modules.append(dict(name=name, graphs=[exporter.graph(node) for node in selected]))
         model = {
-            'format': 'quint-decision-model', 'version': 5, 'module': module,
-            'source': {'sha256': sha256(raw).hexdigest()}, 'imports': imports,
-            'graphs': [exporter.graph(name) for name in names],
+            'format': 'quint-decision-model', 'version': 6, 'source': {'sha256': sha256(raw).hexdigest()},
+            'imports': imports, 'modules': modules,
         }
         args.output.write_text(json.dumps(model, ensure_ascii=False, sort_keys=True) + '\n', encoding='utf-8')
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:

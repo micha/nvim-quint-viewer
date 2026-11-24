@@ -3,6 +3,7 @@ local api = vim.api
 local graph_view = require('quint_viewer.graph')
 local marks = api.nvim_create_namespace('quint-review-links')
 local lsp_util = vim.lsp.util
+local toggle_to_source = {}
 
 local function show_hover(result)
   local contents = type(result) == 'table' and result.contents
@@ -95,7 +96,7 @@ local function fresh_imports(imports)
 end
 
 local function warn_stale()
-  vim.notify('Quint graph is stale; save or reload the affected files and run :QuintView again.', vim.log.levels.WARN)
+  vim.notify('Quint graph is stale; save or reload the affected files and run :QuintView from source.', vim.log.levels.WARN)
 end
 
 local function no_definition()
@@ -166,7 +167,8 @@ local function export(path, names, cursor, declaration_only)
   local tool = api.nvim_get_runtime_file('tools/export_model.py', false)[1]
   assert(tool, 'could not find the installed model exporter')
   local output = vim.fn.tempname()
-  local argv = {'python3', '-B', tool, '-o', output, '--cursor', tostring(cursor)}
+  local argv = {'python3', '-B', tool, '-o', output}
+  if cursor then vim.list_extend(argv, {'--cursor', tostring(cursor)}) end
   if declaration_only then argv[#argv + 1] = '--declaration' end
   vim.list_extend(argv, {'--', path})
   vim.list_extend(argv, names)
@@ -178,10 +180,10 @@ local function export(path, names, cursor, declaration_only)
   return graph_view.decode(bytes)
 end
 
-local function show(source, path, model, commit_jump)
+local function show(source, path, model, source_view, commit_jump)
   local lines, targets, folds, heading = graph_view.rows(model,
     'gd graph definition   gD source definition   K hover   grr references'
-    .. '   <C-o>/<C-i> back/forward   za toggle branch')
+    .. '   <C-o>/<C-i> back/forward   za toggle branch   :QuintView source')
   assert(heading, 'projection has no definitions')
   local source_file = vim.fs.normalize(vim.uv.fs_realpath(path) or path, {expand_env = false})
   local source_dir = vim.fs.dirname(source_file)
@@ -237,7 +239,7 @@ local function show(source, path, model, commit_jump)
         vim.log.levels.WARN)
       return
     end
-    show(dest, dest_path, projection, function()
+    show(dest, dest_path, projection, {lnum = target.line, col = target.column, coladd = 0}, function()
       if not can_jump() then return false end
       if fresh(dest, dest_path, projection.source.sha256) then return true end
       warn_stale()
@@ -246,6 +248,19 @@ local function show(source, path, model, commit_jump)
   end
 
   local request_number = 0
+  toggle_to_source[graph] = function()
+    assert(api.nvim_buf_is_valid(source), 'the backing Quint source buffer no longer exists')
+    -- A reply must not resume if the user revisits this graph after toggling.
+    request_number = request_number + 1
+    local win = api.nvim_get_current_win()
+    api.nvim_cmd({cmd = 'buffer', args = {tostring(source)}, mods = {hide = true, keepjumps = true}}, {})
+    if api.nvim_get_current_win() == win and api.nvim_get_current_buf() == source then
+      vim.fn.winrestview(source_view)
+    end
+  end
+  api.nvim_create_autocmd('BufWipeout', {buffer = graph, once = true, callback = function()
+    toggle_to_source[graph] = nil
+  end})
   local function lookup(kind, display, graph_only)
     local method = 'textDocument/' .. kind
     request_number = request_number + 1
@@ -319,7 +334,7 @@ local function show(source, path, model, commit_jump)
     vim.cmd("normal! m'") -- Record the exact origin in the native jumplist.
   end
   -- Keep the saved document (and its LSP attachment) loaded even with 'nohidden'.
-  api.nvim_cmd({cmd = 'buffer', args = {tostring(graph)}, mods = {hide = true}}, {})
+  api.nvim_cmd({cmd = 'buffer', args = {tostring(graph)}, mods = {hide = true, keepjumps = not commit_jump}}, {})
   local options = vim.wo[0][0]
   options.foldexpr = "get(get(b:, 'quint_branch_folds', []), v:lnum - 1, 0)"
   options.foldtext = "getline(v:foldstart) .. ' …'"
@@ -327,22 +342,28 @@ local function show(source, path, model, commit_jump)
   options.foldminlines = 1
   options.foldenable = true
   options.foldlevel = 99
-  if commit_jump then api.nvim_win_set_cursor(0, {heading, 0}) end
+  api.nvim_win_set_cursor(0, {commit_jump and heading or 1, 0})
 end
 
 function M.open(names)
   local ok, err = pcall(function()
     local win, source = api.nvim_get_current_win(), api.nvim_get_current_buf()
+    if toggle_to_source[source] then
+      assert(#names == 0, 'run :QuintView without names to return to source')
+      toggle_to_source[source]()
+      return
+    end
     local path = api.nvim_buf_get_name(source)
     assert(vim.bo[source].buftype == '' and vim.endswith(path, '.qnt'), 'open a saved .qnt file first')
     local bytes = read_file(path)
     assert(bytes and matches_buffer(source, bytes), 'save or reload the Quint source first')
-    local row, column = unpack(api.nvim_win_get_cursor(win))
-    local model = export(path, names, byte_offset(row, column))
+    local source_view = vim.fn.winsaveview()
+    local cursor = #names > 0 and byte_offset(source_view.lnum, source_view.col) or nil
+    local model = export(path, names, cursor)
     assert(model.source.sha256 == vim.fn.sha256(bytes) and fresh(source, path, model.source.sha256),
       'the Quint source changed while building the graph; run :QuintView again')
     if api.nvim_get_current_win() == win and api.nvim_get_current_buf() == source then
-      show(source, path, model)
+      show(source, path, model, source_view)
     end
   end)
   if not ok then vim.notify('QuintView: ' .. tostring(err), vim.log.levels.ERROR) end

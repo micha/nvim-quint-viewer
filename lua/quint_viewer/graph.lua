@@ -9,11 +9,19 @@ end
 
 function M.decode(text)
   local model = vim.json.decode(text)
-  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 5,
-    'expected a quint-decision-model v5 projection')
+  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 6,
+    'expected a quint-decision-model v6 projection')
   assert(type(model.source) == 'table' and type(model.source.sha256) == 'string'
-    and type(model.graphs) == 'table' and type(model.module) == 'string'
+    and vim.islist(model.modules) and #model.modules > 0
     and type(model.imports) == 'table', 'projection is missing model data')
+  for _, module in ipairs(model.modules) do
+    assert(type(module) == 'table' and type(module.name) == 'string'
+      and vim.islist(module.graphs) and #module.graphs > 0, 'projection is missing module data')
+    for _, graph in ipairs(module.graphs) do
+      assert(type(graph) == 'table' and type(graph.title) == 'string' and type(graph.tree) == 'table',
+        'projection is missing definition data')
+    end
+  end
   for path, fingerprint in pairs(model.imports) do
     assert(relative_path(path) and type(fingerprint) == 'string' and #fingerprint == 64
       and fingerprint:match('^[0-9a-f]+$'), 'projection has an invalid import fingerprint')
@@ -66,13 +74,20 @@ function M.rows(model, legend)
       row(prefix, node.expression)
     end
   end
-  row('Quint decision model: ' .. model.module)
+  local grouped = #model.modules > 1
+  row(grouped and 'Quint decision model' or 'Quint decision model: ' .. model.modules[1].name)
   row(legend)
-  for _, graph in ipairs(model.graphs) do
-    row('')
-    row(graph.title)
-    first_heading = first_heading or #lines
-    walk(graph.tree, '  ')
+  for _, module in ipairs(model.modules) do
+    if grouped then
+      row('')
+      row('Module ' .. module.name)
+    end
+    for _, graph in ipairs(module.graphs) do
+      row('')
+      row(graph.title)
+      first_heading = first_heading or #lines
+      walk(graph.tree, '  ')
+    end
   end
   return lines, targets, folds, first_heading
 end

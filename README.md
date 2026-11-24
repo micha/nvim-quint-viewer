@@ -1,6 +1,6 @@
 # nvim-quint-viewer
 
-Read a [Quint](https://quint.sh/) definition as a decision tree in Neovim.
+Read [Quint](https://quint.sh/) definitions as decision trees in Neovim.
 From a `.qnt` file, open a read-only graph in the same window and follow
 definitions in graph or source form with the Quint language server. The graph
 shows the rules as written, not a simulation, proof, or map of reachable states.
@@ -44,12 +44,18 @@ vim.lsp.config('quint', {
 vim.lsp.enable('quint')
 ```
 
-Open `examples/approval.qnt`, place the cursor on the `review` definition
-name, and run `:QuintView`. Put the cursor on `mayApprove` in the `allowed =`
-row and press `gd` to open the graph of `mayApprove` at its heading. `Ctrl-O`
-returns to the original graph position, and `Ctrl-I` goes forward again.
-The graph is read-only; the real `.qnt` buffer stays editable. For imports and
-nested branches, try the [access review example](examples/access_review/).
+Open `examples/approval.qnt` and run `:QuintView` from anywhere in the file.
+It shows the file’s top-level operators and values in source order, grouped
+by module. Imported definitions and nested bindings aren’t separate entries.
+Destructuring is shown as source, without generated names.
+Run `:QuintView` again to return to editable source at your previous
+cursor position. Reopening the graph from source builds it from the saved file.
+
+Put the graph cursor on `mayApprove` in the `allowed =` row and press `gd`
+to open the focused graph of `mayApprove` at its heading. `Ctrl-O` returns to
+the original graph position, and `Ctrl-I` goes forward again. `:QuintView` from
+a focused `gd` graph shows its backing source at the declaration. For imports
+and nested branches, try the [access review example](examples/access_review/).
 
 - `gd` stays in graph mode for top-level operators and values, including
   imports. Each jump builds the destination graph on demand. Parameters and
@@ -71,7 +77,7 @@ edited, out-of-date, or unavailable import blocks imported lookups without
 blocking local LSP requests. A local graph jump can still fail if Quint can't
 build the destination graph, for example because an import is missing. The
 viewer checks freshness again before acting on a reply. Save or reload the
-affected files, then rebuild the graph with `:QuintView review` from the caller.
+affected files, then rebuild the graph with `:QuintView` from the caller’s source.
 `gd` (and `gD` on imported symbols) only jumps if the server's destination
 matches the declaration's mapped file, line, and byte column. For imported
 symbols, a `grr` list must contain that same location, but this does not
@@ -91,12 +97,8 @@ by Neovim; deeper branches stay inside their ancestor’s fold. Native options
 like `foldlevelstart` still apply on later buffer entry. Other expressions
 are shown as source.
 
-With no arguments, `:QuintView` selects the top-level operator or value at
-its definition name or inside its body. A local binding selects the
-surrounding top-level definition. Qualifiers such as `pure` and outer
-grouping punctuation may fall outside the mapped range.
-
-Pass names to show definitions in order (`:QuintView review mayApprove`).
+From source, pass names to show a subset in the requested order
+(`:QuintView review mayApprove`).
 Names are looked up in the module at the cursor. Outside a
 module, the viewer uses the only module in the file, or the one named after
 the file if there are several. If neither identifies a module, place the

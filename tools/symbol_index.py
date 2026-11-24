@@ -43,7 +43,9 @@ class Index:
     def use(self, node, spelling):
         key = str(node['id'])
         target = self.table.get(key)
-        if not target or target['kind'] not in ('def', 'param'):
+        # Lowered destructuring can have compiler-resolved uses with no
+        # source span. Index only occurrences actually present in the text.
+        if not target or target['kind'] not in ('def', 'param') or key not in self.offsets:
             return
         start, end = self.span(node)
         # Resolve the identity in the compiler table first. The spelling only

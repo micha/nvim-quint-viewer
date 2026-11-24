@@ -14,7 +14,7 @@ FIXTURE = ROOT / 'tests/fixtures/graph_definition_mode'
 HISTORIES = {
     'localGraphAndHistoryTest', 'importedGraphAndHistoryTest', 'importedGraphSupportsSecondHopTest',
     'parameterAdvisesRawAndJumpsTest', 'bindingAdvisesRawAndJumpsTest', 'rawSourceMapStillWorksTest',
-    'importedRawDefinitionTest',
+    'importedRawDefinitionTest', 'toggleImportedGraphTest', 'toggleCancelsPendingDefinitionTest',
     'staleGraphBeforeRequestTest', 'staleCallerBeforeReplyTest', 'stalePolicyBeforeReplyTest',
     'stalePolicyBeforeRawReplyTest', 'stalePolicyDoesNotAffectLocalGraphTest', 'wrongScopeReplyTest',
 }
@@ -66,6 +66,9 @@ def replay(directory, worktree):
                 lookups=observed(chain, 'pressDefinition')['lookups']),
         control('staleReplyGraphRejectedTest', 'stalePolicyBeforeReplyTest', 'deliverReply',
                 **{key: value for key, value in observed(imported).items() if key != 'notices'}),
+        control('wrongToggleBackingSourceRejectedTest', 'toggleImportedGraphTest', 'toggleView', focus='caller.qnt'),
+        control('canceledReplyJumpRejectedTest', 'toggleCancelsPendingDefinitionTest', 'deliverReply',
+                **observed('localGraphAndHistoryTest')),
     ]
     verdicts = directory / 'graph_definition_mode_verdicts.qnt'
     verdicts.write_text('\n\n'.join(tests) + '\n}\n', encoding='utf-8')

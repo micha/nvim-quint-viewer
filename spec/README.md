@@ -1,6 +1,6 @@
 # Viewer specification roadmap
 
-The viewer has verified models for [source graph selection](graph_selection.qnt),
+The viewer has verified models for [source graph selection and toggling](graph_selection.qnt),
 [raw definition jumps from a read-only source graph](graph_navigation.qnt),
 [graph-to-graph definition navigation](graph_definition_mode.qnt),
 [native branch folding](branch_folding.qnt),
@@ -12,23 +12,28 @@ The viewer has verified models for [source graph selection](graph_selection.qnt)
 drives public commands and keys and records observations. Quint judges those
 observations against the same transition rules that produced the histories.
 
-## Source graph selection
+## Whole-file graph and source toggle
 
-From a saved `.qnt` file, `:QuintView` without arguments opens the top-level
-operator or value at the cursor in a read-only graph in the same window.
-The [selection fixture](../tests/fixtures/graph_selection.qnt) exercises two
-definitions on one line after a Unicode string, same-named definitions in two
-modules, and a cursor on a local binding inside the selected definition. A
-cursor outside a definition, including on a type variant, emits one error and
-leaves the source and cursor in place.
+From a saved `.qnt` file, bare `:QuintView` renders all local top-level
+operators and values in source order, grouped by module. The graph opens in
+the same window regardless of the source cursor. The [selection fixture](../tests/fixtures/graph_selection.qnt)
+exercises same-line definitions, same-named definitions in different modules,
+and a cursor on a nested binding, a type variant, or outside any module.
+Names of nested bindings and synthetic variant constructors are not standalone
+graphs. Destructuring declarations appear as source without generated names.
+A declaration-only file with no graphable definition stays in source.
 
-The named form uses the module at the cursor and shows the requested names
+Bare `:QuintView` in the graph returns to the backing source and restores the
+source cursor, even if the graph is now stale. From source, a dirty buffer is
+rejected; after saving, the command builds an updated graph. The named form
+requires source, uses the module at the cursor, and shows the requested names
 in order. Outside a module it falls back to the only local module, or the
 one matching the filename. If neither rule selects a module, or if a name
 is not defined in the selected module, the command does not switch buffers.
 
-Each history covers one command from a clean session, without a language
-server.
+The finite model covers one source window, a fixed file per history, one
+possible edit/save, and no language server. TLC checks 82 distinct states
+at depth 8, without a trace-length cap.
 
 ## Verify and generate histories
 
@@ -42,8 +47,8 @@ The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 0.62.4 distribution that Quint uses for TLC. The script runs `quint verify`
 with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
-explores 15 reachable states for selection, 27 for raw source navigation,
-98 for graph-to-graph definition navigation, 103 for branch folding,
+explores 82 reachable states for selection and toggling, 27 for raw source navigation,
+105 for graph-to-graph definition navigation, 103 for branch folding,
 14 for graph hover and references, 61 for cross-file
 definition navigation, 18 for hover on imported calls, 64 for references
 to imported calls, and 95 for lookup freshness across re-exports and delayed replies.
@@ -78,9 +83,8 @@ Omit `--worktree` to test a fresh installation from committed `HEAD`.
 from the ITF histories to [the Lua interpreter](../tests/replay_graph_selection.lua).
 Each history starts a clean headless Neovim session. Quint executes the same
 transitions and checks the observed view after each request. The selection
-negative control substitutes the real graph for the wrong definition on the
-same line; Quint must reject it through the same assertions. Java and TLC
-are needed for model verification, not for replay.
+negative controls omit a module or report the wrong cursor on toggle; Quint
+must reject both. Java and TLC are needed for model verification, not for replay.
 
 ## Definition navigation in graph mode
 
@@ -100,17 +104,19 @@ On a parameter or local binding whose definition has no standalone graph,
 visits raw source, with the same checks as the previous source jump. The
 viewer does not override a user's `gd` mapping in source buffers.
 
+Bare `:QuintView` from a focused `gd` graph returns to the backing source
+at its declaration. Toggling to source while a definition request is pending
+cancels its effect, even if the same graph cursor is revisited before the reply.
+
 TLC covers one window, one ready server, one direct import, at most one
-edit, and no competing requests or cursor movement while awaiting a reply.
-The fresh two-hop history is the only modeled multi-jump chain. TLC checks
-all 98 reachable states without a trace-length cap (depth 11, including
-the initial state). The [replay](../tests/replay_graph_definition_mode.py)
-exercises 13 histories with the upstream server. It holds real definition
-replies before delivery and substitutes a wrong-scope location in one
-history. Negative controls substitute the same-named local graph, replace
-a graph jump with a raw jump, report a different buffer on `Ctrl-I`, report
-the original caller's request for the second hop, and allow a graph jump
-from a stale reply. Quint must reject each.
+edit, and no competing requests. The fresh two-hop history is the only
+modeled multi-jump chain. TLC checks all 105 reachable states without a
+trace-length cap (depth 11, including the initial state). The
+[replay](../tests/replay_graph_definition_mode.py) exercises 15 histories with
+upstream Quint. It holds real definition replies and substitutes a wrong-scope
+location in one history. Negative controls cover wrong scope, a raw fallback,
+inexact native history, wrong backing source on a second lookup or a toggle,
+and a jump from a stale or canceled reply. Quint must reject each.
 
 With the tools below, run `scripts/check.sh --worktree --with-lsp` or just
 `python3 -B tests/replay_graph_definition_mode.py --worktree`.
