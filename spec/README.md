@@ -1,6 +1,6 @@
 # Viewer specification roadmap
 
-The viewer has verified models for [offline Definition links](source_navigation.qnt),
+The viewer has verified models for [source graph selection](graph_selection.qnt),
 [definition jumps from a read-only source graph](graph_navigation.qnt),
 [native branch folding](branch_folding.qnt),
 [hover and references from the source graph](graph_lookups.qnt), and
@@ -8,22 +8,24 @@ The viewer has verified models for [offline Definition links](source_navigation.
 drives public commands and keys and records observations. Quint judges those
 observations against the same transition rules that produced the histories.
 
-## Source navigation
+## Source graph selection
 
-The model starts with a fresh export and no viewer open. It opens the export,
-selects one of two symbols in the graph, focuses the inspector, and follows
-that symbol's **Definition** link (not its selected occurrence link). The
-source file may change on disk after opening the viewer and before the jump.
+From a saved `.qnt` file, `:QuintView` without arguments opens the top-level
+operator or value at the cursor in a read-only graph in the same window.
+The [selection fixture](../tests/fixtures/graph_selection.qnt) exercises two
+definitions on one line after a Unicode string, same-named definitions in two
+modules, and a cursor on a local binding inside the selected definition. A
+cursor outside a definition, including on a type variant, emits one error and
+leaves the source and cursor in place.
 
-- A fresh jump adds one source pane, retains the graph and inspector, and
-  focuses the source at the selected definition's line and column zero.
-- A changed source adds no pane, keeps focus in the inspector, and emits one
-  warning about the changed fingerprint. The edit itself does not notify.
+The named form uses the module at the cursor and shows the requested names
+in order. Outside a module it falls back to the only local module, or the
+one matching the filename. If neither rule selects a module, or if a name
+is not defined in the selected module, the command does not switch buffers.
 
-The model is limited to one clean session, two definitions, one optional
-on-disk edit to a still-readable source, and one link attempt. Terminal states
-can stutter. It does not model missing files, unsaved buffers, repeated jumps,
-changes during a jump, pane layout, other links, or invalid exports.
+The retired `*.qmodel.json` entry point is modeled separately: opening a
+valid old export leaves ordinary JSON in the existing window. Each history
+covers one command from a clean session, without a language server.
 
 ## Verify and generate histories
 
@@ -37,9 +39,9 @@ The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 0.62.4 distribution that Quint uses for TLC. The script runs `quint verify`
 with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
-explores 19 reachable states for offline navigation, 27 for source graph
-navigation, 103 for branch folding, 14 for graph hover and references,
-and 12 for cross-file definition navigation.
+explores 16 reachable states for selection, 27 for source graph navigation,
+103 for branch folding, 14 for graph hover and references, and 39 for
+cross-file definition navigation.
 These checks verify the models, not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
@@ -49,36 +51,31 @@ To inspect the generated histories, run:
 
 ```sh
 traces=$(mktemp -d)
-nix develop -c quint test spec/source_navigation.qnt --backend=typescript \
+nix develop -c quint test spec/graph_selection.qnt --backend=typescript \
   --seed=1 --out-itf="$traces/{test}_{seq}.itf.json"
 ```
 
-Each ITF state contains `session.request` (`op` and `arg`), the source-change
-input, and an expected `session.view`. The initial `init` row describes the
-baseline before user actions. The `approval.qnt` destination is an ID for the
-exact resolved fixture path, not a basename match. `selected` is a scoped
-fixture symbol name, not an exporter-generated ID. Pane roles are sorted and
-retain duplicates; notices report severity and reason from that request, not
-text already visible in the inspector. Keep generated traces untracked.
+Each ITF state contains `session.request` (`op` and `arg`) and an expected
+`session.view`. The initial `init` row describes the baseline. Keep generated
+traces untracked.
 
 ## Replay against Neovim
 
-`scripts/check.sh` runs replay after the exporter and viewer smoke tests. To
-run only replay, use:
+`scripts/check.sh` runs replay after checking graph export. To replay only
+selection, use:
 
 ```sh
-nix develop -c python3 -B tests/replay_source_navigation.py --worktree
+nix develop -c python3 -B tests/replay_graph_selection.py --worktree
 ```
 
 Omit `--worktree` to test a fresh installation from committed `HEAD`.
-[The Python driver](../tests/replay_source_navigation.py) gives only requests
-from the ITF histories to [the Lua interpreter](../tests/replay_source_navigation.lua).
-Each history uses a fresh fixture export and a clean headless Neovim session.
-The driver feeds the observed view after each request back to Quint, which
-executes the same transitions and checks each view. It also keeps the real
-stale warning but substitutes the pane, focus, and cursor changes from a
-fresh jump. Quint must reject that negative control through the same
-assertions. Java and TLC are needed for model verification, not for replay.
+[The Python driver](../tests/replay_graph_selection.py) gives only requests
+from the ITF histories to [the Lua interpreter](../tests/replay_graph_selection.lua).
+Each history starts a clean headless Neovim session. Quint executes the same
+transitions and checks the observed view after each request. The selection
+negative control substitutes the real graph for the wrong definition on the
+same line; Quint must reject it through the same assertions. Java and TLC
+are needed for model verification, not for replay.
 
 ## Source graph navigation
 

@@ -3,39 +3,32 @@ local max_fold_depth = 20 -- Neovim's native limit, including expression folds.
 
 function M.decode(text)
   local model = vim.json.decode(text)
-  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 1,
-    'expected a quint-decision-model v1 export')
-  assert(type(model.source) == 'table' and type(model.source.path) == 'string'
-    and type(model.source.sha256) == 'string' and type(model.graphs) == 'table'
-    and type(model.symbols) == 'table' and type(model.uses) == 'table' and type(model.module) == 'string',
-    'export is missing model data')
+  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 2,
+    'expected a quint-decision-model v2 projection')
+  assert(type(model.source) == 'table' and type(model.source.sha256) == 'string'
+    and type(model.graphs) == 'table' and type(model.module) == 'string', 'projection is missing model data')
   return model
 end
 
-function M.rows(model, legend, source_review)
+function M.rows(model, legend)
   local lines, targets, folds = {}, {}, {}
   local depth = 0
-  local function row(text, ...)
+  local function row(text, parts)
     local refs = {}
-    for i = 1, select('#', ...) do
-      for _, part in ipairs(select(i, ...)) do
-        local position = source_review and part.position or nil
-        if part.symbol or position then
-          refs[#refs + 1] = {col = #text, end_col = #text + #part.text,
-            symbol = part.symbol, use = part.use, definition_occurrence = position,
-            definition_target = position and part.definition_target or nil}
-        end
-        text = text .. part.text
+    for _, part in ipairs(parts or {}) do
+      if part.position then
+        refs[#refs + 1] = {col = #text, end_col = #text + #part.text,
+          position = part.position, definition_target = part.definition_target}
       end
+      text = text .. part.text
     end
     lines[#lines + 1] = text
     targets[#lines] = refs
     folds[#lines] = math.min(depth, max_fold_depth)
   end
-  local function literal(text) return {{text = text}} end
   local function walk(node, prefix)
     for _, binding in ipairs(node.bindings) do
-      row(prefix, {{text = binding.name, symbol = binding.symbol}}, literal(' = '), binding.expr)
+      row(prefix .. binding.name .. ' = ', binding.expr)
     end
     if node.guard then
       row(prefix .. 'IF ', node.guard)
@@ -50,22 +43,6 @@ function M.rows(model, legend, source_review)
       end
       branch('├─ Yes', '│  ', node.yes)
       branch('└─ No', '   ', node.no)
-    elseif node.outcome then
-      local outcome = node.outcome
-      row(prefix .. 'Status: ', outcome.status, literal('    Label: '), outcome.label)
-      row(prefix .. 'Value:  ', outcome.value, literal('    Count: '), outcome.count)
-      if outcome.next_state then
-        row(prefix .. 'Next state: ', outcome.next_state)
-      elseif #outcome.updates == 0 then
-        row(prefix .. 'Next state: unchanged')
-      else
-        row(prefix .. 'Next state (other fields unchanged):')
-        for _, update in ipairs(outcome.updates) do
-          row(prefix .. '  ', {update.field}, literal(' ← '), update.value)
-        end
-      end
-    elseif node.unsupported then
-      row(prefix .. 'Outside model scope: ', node.unsupported)
     else
       row(prefix, node.expression)
     end

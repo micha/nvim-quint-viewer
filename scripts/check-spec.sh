@@ -34,9 +34,12 @@ histories() {
   done
 }
 
-verify source_navigation sourceOnlyAfterFreshFollow noticeOnlyAfterChangedFollow \
-  freshFollowOpensDefinition changedFollowKeepsViewer
-histories source_navigation freshLocalDefinitionTest freshOperatorDefinitionTest changedAfterOpenTest
+verify graph_selection graphIsReadOnly cursorUsesEnclosingDefinition rejectionKeepsSource legacyIsOrdinaryJson
+histories graph_selection definitionNameTest sameLineAfterUnicodeTest nestedLocalUsesOuterTest \
+  moduleHeaderIsNotDefinitionTest outsideDefinitionTest namedDefinitionsInOrderTest \
+  namedDefinitionInSecondModuleTest ambiguousNamedModuleTest nameDoesNotCrossModulesTest \
+  soleModuleFallbackTest variantIsNotADefinitionTest filenameFallbackTest cursorModuleBeatsFilenameTest \
+  namedDefinitionInMacFileTest legacyArtifactIsOrdinaryJsonTest
 
 verify graph_navigation singleWindow graphIsReadOnly freshFollowReachesDefinition \
   staleFollowKeepsOrigin backRestoresOrigin closeYesBranchKeepsGraph

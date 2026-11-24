@@ -101,11 +101,11 @@ local function show_definition(result, client, target, can_jump)
   end
 end
 
-local function export(path, names)
+local function export(path, names, cursor)
   local tool = api.nvim_get_runtime_file('tools/export_model.py', false)[1]
   assert(tool, 'could not find the installed model exporter')
-  local output = vim.fn.tempname() .. '.qmodel.json'
-  local argv = {'python3', '-B', tool, '--source-review', '-o', output, '--', path}
+  local output = vim.fn.tempname()
+  local argv = {'python3', '-B', tool, '-o', output, '--cursor', tostring(cursor), '--', path}
   vim.list_extend(argv, names)
   local result = vim.system(argv, { text = true }):wait()
   local bytes = result.code == 0 and read_file(output)
@@ -117,7 +117,7 @@ end
 
 local function show(source, path, model)
   local lines, targets, folds = graph_view.rows(model,
-    'gd definition   K hover   grr references   <C-o> return   za toggle branch', true)
+    'gd definition   K hover   grr references   <C-o> return   za toggle branch')
   local graph = api.nvim_create_buf(false, true)
   vim.bo[graph].bufhidden = 'hide' -- native jump history must be able to return to this buffer
   api.nvim_buf_set_lines(graph, 0, -1, false, lines)
@@ -126,16 +126,12 @@ local function show(source, path, model)
   local source_dir = vim.fs.dirname(vim.uv.fs_realpath(path) or path)
   for row, refs in ipairs(targets) do
     for _, ref in ipairs(refs) do
-      local use = ref.use and model.uses[ref.use]
-      ref.position = use and use.position
       if ref.definition_target then
         ref.definition_target.path = vim.fs.normalize(vim.fs.joinpath(source_dir, ref.definition_target.path),
           {expand_env = false})
       end
-      if ref.position or (ref.definition_occurrence and ref.definition_target) then
-        api.nvim_buf_set_extmark(graph, marks, row - 1, ref.col,
-          {end_col = ref.end_col, hl_group = 'Underlined'})
-      end
+      api.nvim_buf_set_extmark(graph, marks, row - 1, ref.col,
+        {end_col = ref.end_col, hl_group = 'Underlined'})
     end
   end
 
@@ -159,9 +155,8 @@ local function show(source, path, model)
     local position, target
     for _, ref in ipairs(targets[cursor[1]] or {}) do
       if ref.col <= cursor[2] and cursor[2] < ref.end_col then
-        position = ref.position
-        if not position and kind == 'definition' and ref.definition_target then
-          position, target = ref.definition_occurrence, ref.definition_target
+        if not ref.definition_target or kind == 'definition' then
+          position, target = ref.position, ref.definition_target
         end
         break
       end
@@ -227,7 +222,10 @@ function M.open(names)
     assert(vim.bo[source].buftype == '' and vim.endswith(path, '.qnt'), 'open a saved .qnt file first')
     local bytes = read_file(path)
     assert(bytes and matches_buffer(source, bytes), 'save or reload the Quint source first')
-    local model = export(path, names)
+    local row, column = unpack(api.nvim_win_get_cursor(win))
+    -- line2byte includes the fileformat's line endings but not the BOM.
+    local offset = vim.fn.line2byte(row) - 1 + column + (vim.bo[source].bomb and 3 or 0)
+    local model = export(path, names, offset)
     assert(model.source.sha256 == vim.fn.sha256(bytes) and fresh(source, path, model.source.sha256),
       'the Quint source changed while building the graph; run :QuintView again')
     if api.nvim_get_current_win() == win and api.nvim_get_current_buf() == source then

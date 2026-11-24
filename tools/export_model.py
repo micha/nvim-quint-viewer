@@ -13,7 +13,58 @@ from tempfile import TemporaryDirectory
 from symbol_index import Index
 
 
-def load_ir(quint, source, module_name, raw, *, source_review=False):
+NO_DEFINITION = 'no operator or value under the cursor; place it on a definition name or body'
+
+
+def cursor_index(raw, offset):
+    if not 0 <= offset <= len(raw):
+        raise ValueError('cursor is outside the saved Quint source')
+    # Quint indexes Unicode code points; the editor supplies a byte offset.
+    return len(raw[:offset].decode('utf-8'))
+
+
+def select_module(modules, offsets, module_name, stem, cursor, names):
+    def contains(node):
+        _, start, end = offsets[str(node['id'])]
+        return cursor is not None and start['index'] <= cursor <= end['index']
+
+    if module_name is not None:
+        candidates = [module for module in modules if module['name'] == module_name]
+        if len(candidates) != 1:
+            raise ValueError(f'expected one module named {module_name!r} in the input file')
+    else:
+        candidates = [module for module in modules if contains(module)]
+        if not candidates and names:
+            candidates = modules if len(modules) == 1 else [m for m in modules if m['name'] == stem]
+        if len(candidates) != 1:
+            raise ValueError('place the cursor in a Quint module to select named definitions' if names else NO_DEFINITION)
+    return candidates[0]
+
+
+def select_at_cursor(definitions, offsets, cursor):
+    # The compiler also emits `def`s for variant constructors. Cursor selection
+    # should not mistake the text of a type declaration for an operator body.
+    for node in definitions.values():
+        if node['kind'] == 'typedef':
+            _, start, end = offsets[str(node['id'])]
+            if start['index'] <= cursor <= end['index']:
+                raise ValueError(NO_DEFINITION)
+    names = []
+    for name, node in definitions.items():
+        if node['kind'] != 'def':
+            continue
+        # A definition's ID maps to its name, not its whole declaration. The
+        # expression span supplies the other bound (including nested bindings).
+        start = offsets[str(node['id'])][1]['index']
+        end = offsets[str(node['expr']['id'])][2]['index']
+        if start <= cursor <= end:
+            names.append(name)
+    if len(names) != 1:
+        raise ValueError(NO_DEFINITION)
+    return names
+
+
+def load_ir(quint, source, module_name, raw, cursor, names):
     with TemporaryDirectory() as tmp:
         ir = Path(tmp) / 'model.json'
         locations = Path(tmp) / 'locations.json'
@@ -27,26 +78,25 @@ def load_ir(quint, source, module_name, raw, *, source_review=False):
             return parsed, json.loads(locations.read_text())
 
         parsed, index = parse()
-        fingerprints = {}
-        if source_review:
-            files = {Path(path) for path in index['sourceIndex'].values()}
-            fingerprints = {path: sha256(raw if path == source else path.read_bytes()).hexdigest()
-                            for path in files}
-            if files - {source}:
-                # The first parse discovers imports. Parse again after capturing
-                # their fingerprints so an old map isn't paired with new bytes.
-                parsed, index = parse()
-                if {Path(path) for path in index['sourceIndex'].values()} != files:
-                    raise ValueError('Quint imports changed while building the graph; run :QuintView again')
+        files = {Path(path) for path in index['sourceIndex'].values()}
+        fingerprints = {path: sha256(raw if path == source else path.read_bytes()).hexdigest()
+                        for path in files}
+        if files - {source}:
+            # The first parse discovers imports. Parse again after capturing
+            # their fingerprints so an old map isn't paired with new bytes.
+            parsed, index = parse()
+            if {Path(path) for path in index['sourceIndex'].values()} != files:
+                raise ValueError('Quint imports changed while building the graph; run :QuintView again')
 
-        modules = [module for module in parsed['modules'] if module['name'] == module_name]
-        if len(modules) != 1:
-            raise ValueError(f'expected one module named {module_name!r}; use --module to select it')
         source_ids = {int(key) for key, path in index['sourceIndex'].items() if Path(path).resolve() == source}
         offsets = {key: span for key, span in index['map'].items() if span[0] in source_ids}
-        definitions = {node['name']: node for node in modules[0]['declarations'] if 'name' in node}
+        modules = [module for module in parsed['modules'] if str(module['id']) in offsets]
+        module = select_module(modules, offsets, module_name, source.stem, cursor, names)
+        definitions = {node['name']: node for node in module['declarations'] if 'name' in node}
         if any(str(node['id']) not in offsets for node in definitions.values()):
             raise ValueError('selected module must be defined in the input file')
+        if not names:
+            names = select_at_cursor(definitions, offsets, cursor)
         subprocess.run([quint, 'typecheck', str(source), '--out', str(ir)], check=True)
         checked = json.loads(ir.read_text())
         if checked.get('errors'):
@@ -54,8 +104,7 @@ def load_ir(quint, source, module_name, raw, *, source_review=False):
         for path, fingerprint in fingerprints.items():
             if sha256(path.read_bytes()).hexdigest() != fingerprint:
                 raise ValueError('Quint source changed while building the graph; run :QuintView again')
-        targets = review_targets(parsed, index, source, fingerprints) if source_review else {}
-        return definitions, offsets, checked, targets
+        return module['name'], names, definitions, offsets, checked, review_targets(parsed, index, source, fingerprints)
 
 
 def review_targets(parsed, index, source, fingerprints):
@@ -71,88 +120,26 @@ def review_targets(parsed, index, source, fingerprints):
 
 
 class Exporter:
-    def __init__(self, definitions, index, profile):
+    def __init__(self, definitions, index):
         self.definitions = definitions
         self.index = index
-        self.profile = profile
 
     def fragments(self, node):
-        start, end, _ = self.index.span(node)
+        start, end = self.index.span(node)
         return [{**part, 'text': re.sub(r'\r?\n[ \t]*', ' ', part['text'])}
                 for part in self.index.fragments(start, end) if part['text']]
 
-    def state_updates(self, node, locals_):
-        if node.get('opcode') == 'with':
-            base, field, value = node['args']
-            updates = self.state_updates(base, locals_)
-            if updates is not None and field['kind'] == 'str':
-                return {**updates, field['value']: (field, value)}
-        if node['kind'] == 'name':
-            if node['name'] == 'state':
-                return {}
-            resolved = self.index.table.get(str(node['id']), {})
-            if resolved.get('id') in locals_:
-                expression, scope = locals_[resolved['id']]
-                return self.state_updates(expression, scope)
-        return None
-
-    def prediction(self, node):
-        if not self.profile:
-            return None
-        name = node.get('opcode')
-        if name not in ('predict', 'unsupported', 'success'):
-            return None
-        target = self.index.table.get(str(node['id']), {})
-        if target.get('id') != self.definitions.get(name, {}).get('id'):
-            return None
-        if name == 'predict':
-            return node['args']
-        body = self.definitions[name]['expr']['expr']
-        if body.get('opcode') != 'predict' or len(body['args']) != 5:
-            raise ValueError(f'dml-refs profile expects {name} to wrap predict')
-        _, status, value, count, label = body['args']
-        state, *labels = node['args']
-        if labels:
-            label, = labels
-        return state, status, value, count, label
-
-    def outcome(self, node, locals_, data):
-        predicted = self.prediction(node)
-        if predicted is None:
-            return dict(data, expression=self.fragments(node))
-        state, status, value, count, label = predicted
-        if node.get('opcode') == 'unsupported':
-            return dict(data, unsupported=self.fragments(label))
-        outcome = dict(status=self.fragments(status), label=self.fragments(label),
-                       value=self.fragments(value), count=self.fragments(count))
-        updates = self.state_updates(state, locals_)
-        if updates is None:
-            return dict(data, outcome=dict(outcome, next_state=self.fragments(state)))
-        outcome['updates'] = []
-        for field, expression in updates.values():
-            if expression.get('opcode') == 'Map' and not expression['args']:
-                value = [{'text': 'empty map'}]
-            elif expression.get('opcode') == 'field' and expression['args'][0].get('name') == 'state':
-                value = [{'text': 'previous '}, self.index.field_fragment(expression['args'][1])]
-            else:
-                value = self.fragments(expression)
-            outcome['updates'].append(dict(field=self.index.field_fragment(field), value=value))
-        return dict(data, outcome=outcome)
-
-    def tree(self, node, locals_):
+    def tree(self, node):
         bindings = []
         while node['kind'] == 'let':
             local = node['opdef']
-            if self.profile and local['name'] == 'closed' and self.state_updates(local['expr'], locals_) is not None:
-                locals_ = {**locals_, local['id']: (local['expr'], locals_)}
-            else:
-                bindings.append(dict(name=local['name'], symbol=str(local['id']), expr=self.fragments(local['expr'])))
+            bindings.append(dict(name=local['name'], expr=self.fragments(local['expr'])))
             node = node['expr']
         data = dict(bindings=bindings)
         if node.get('opcode') == 'ite':
             guard, yes, no = node['args']
-            return dict(data, guard=self.fragments(guard), yes=self.tree(yes, locals_), no=self.tree(no, locals_))
-        return self.outcome(node, locals_, data)
+            return dict(data, guard=self.fragments(guard), yes=self.tree(yes), no=self.tree(no))
+        return dict(data, expression=self.fragments(node))
 
     def graph(self, name):
         definition = self.definitions.get(name)
@@ -161,41 +148,36 @@ class Exporter:
         node = definition['expr']
         if node['kind'] == 'lambda':
             node = node['expr']
-        return dict(id=name, title=name, tree=self.tree(node, {}))
+        return dict(title=name, tree=self.tree(node))
 
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path)
-    parser.add_argument('definitions', nargs='+', help='operators or values to visualize, in display order')
+    parser.add_argument('definitions', nargs='*', help='operators or values to visualize, in display order')
     parser.add_argument('-o', '--output', required=True, type=Path)
-    parser.add_argument('--module', help='module name (defaults to the source filename stem)')
+    parser.add_argument('--module', help='explicit module in the source file')
+    parser.add_argument('--cursor', type=int, metavar='BYTE_OFFSET',
+                        help='zero-based byte offset in the saved source')
     parser.add_argument('--quint', default='quint', help='Quint CLI executable')
-    mode = parser.add_mutually_exclusive_group()
-    mode.add_argument('--profile', choices=['dml-refs'], help='enable domain-specific outcome formatting')
-    mode.add_argument('--source-review', action='store_true',
-                      help='export exact positions of resolved references for source navigation')
     args = parser.parse_args()
-    if not args.output.name.endswith('.qmodel.json'):
-        parser.error('output filename must end in .qmodel.json')
+    if not args.definitions and args.cursor is None:
+        parser.error('provide definition names or a cursor position')
     source = args.source.resolve()
-    module = args.module or source.stem
     try:
         raw = source.read_bytes()
         text = raw.decode('utf-8')
-        definitions, offsets, checked, review_definitions = load_ir(
-            args.quint, source, module, raw, source_review=args.source_review)
-        index = Index(definitions, offsets, text, checked, source_review=args.source_review,
-                      review_definitions=review_definitions)
-        exporter = Exporter(definitions, index, args.profile)
-        output = args.output.resolve()
-        artifact = {
-            'format': 'quint-decision-model', 'version': 1, 'module': module,
-            'source': {'path': relpath(source, output.parent), 'sha256': sha256(raw).hexdigest()},
-            'graphs': [exporter.graph(name) for name in args.definitions],
-            **index.payload(),
+        cursor = cursor_index(raw, args.cursor) if args.cursor is not None else None
+        module, names, definitions, offsets, checked, definition_targets = load_ir(
+            args.quint, source, args.module, raw, cursor, args.definitions)
+        index = Index(definitions, offsets, text, checked['table'], definition_targets)
+        exporter = Exporter(definitions, index)
+        model = {
+            'format': 'quint-decision-model', 'version': 2, 'module': module,
+            'source': {'sha256': sha256(raw).hexdigest()},
+            'graphs': [exporter.graph(name) for name in names],
         }
-        output.write_text(json.dumps(artifact, ensure_ascii=False, sort_keys=True) + '\n', encoding='utf-8')
+        args.output.write_text(json.dumps(model, ensure_ascii=False, sort_keys=True) + '\n', encoding='utf-8')
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:
         parser.exit(1, f'quint model export: {error}\n')
 

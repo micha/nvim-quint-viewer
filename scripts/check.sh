@@ -20,7 +20,7 @@ trap 'rm -rf -- "$work"' EXIT
 export XDG_CONFIG_HOME="$work/config" XDG_DATA_HOME="$work/data"
 export XDG_STATE_HOME="$work/state" XDG_CACHE_HOME="$work/cache"
 export QMODEL_ROOT="$root" QMODEL_MODE="$mode"
-mkdir -p "$work/config/nvim" "$work/source"
+mkdir -p "$work/source"
 cp "$root/examples/approval.qnt" "$work/source/approval.qnt"
 
 export_model() {
@@ -38,22 +38,11 @@ grep -q 'no operator or value named' "$work/errors"
 test ! -e "$work/missing.qmodel.json"
 python3 -B "$root/tests/export_source_review.py" "$work"
 
-cp "$root/tests/init.lua" "$work/config/nvim/init.lua"
-run_viewer() {
-  nvim --headless --cmd 'set columns=150' "$1" "+luafile $root/tests/viewer.lua"
-}
-run_viewer "$work/approval.qmodel.json"
-printf '{}\n' >"$work/ordinary.json"
-QMODEL_CASE=ordinary run_viewer "$work/ordinary.json"
-printf '{}\n' >"$work/invalid.qmodel.json"
-QMODEL_CASE=invalid run_viewer "$work/invalid.qmodel.json"
-printf '\n// Edit after export.\n' >>"$work/source/approval.qnt"
-QMODEL_CASE=stale run_viewer "$work/approval.qmodel.json"
-printf 'Deterministic export and Neovim viewer checks passed.\n'
+printf 'Deterministic graph export checks passed.\n'
 # Pass either one --worktree option or no arguments to each replay.
 set --
 if [ -n "$mode" ]; then set -- "$mode"; fi
-python3 -B "$root/tests/replay_source_navigation.py" "$@"
+python3 -B "$root/tests/replay_graph_selection.py" "$@"
 python3 -B "$root/tests/replay_branch_folding.py" "$@"
 if [ -n "$with_lsp" ]; then
   python3 -B "$root/tests/replay_graph_navigation.py" "$@"

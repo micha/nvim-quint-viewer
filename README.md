@@ -2,8 +2,7 @@
 
 Read a [Quint](https://quint.sh/) definition as a decision tree in Neovim.
 From a `.qnt` file, open a read-only graph in the same window and navigate
-back to ordinary source with the Quint language server. You can also open a
-standalone export offline with its symbol inspector. Both are views of the
+back to ordinary source with the Quint language server. The graph shows the
 rules as written, not a simulation, proof, or map of reachable states.
 
 ## Install
@@ -20,9 +19,9 @@ Or install from a local Git checkout (use its absolute path):
 vim.pack.add({ 'file:///absolute/path/to/nvim-quint-viewer' })
 ```
 
-Choose one source. `vim.pack` clones the checkout; use `:packupdate` after
-committing local changes. For live plugin development instead of a managed
-install, prepend the checkout to `runtimepath`.
+Choose one source. `vim.pack` clones the checkout; use
+`:lua vim.pack.update({ 'nvim-quint-viewer' })` to update a managed install.
+For live plugin development instead, prepend the checkout to `runtimepath`.
 
 ## View a saved Quint file
 
@@ -44,9 +43,10 @@ vim.lsp.config('quint', {
 vim.lsp.enable('quint')
 ```
 
-Open `examples/approval.qnt` and run `:QuintView review`. Put the cursor on
-`allowed` in `IF allowed` and press `gd` to jump to its definition. `Ctrl-O`
-returns to the graph at the original cursor position. The graph is read-only;
+Open `examples/approval.qnt`, place the cursor on the `review` definition
+name, and run `:QuintView`. Put the cursor on `allowed` in `IF allowed` and
+press `gd` to jump to its definition. `Ctrl-O` returns to the graph at the
+original cursor position. The graph is read-only;
 the real `.qnt` buffer is unchanged and still editable. For imports and
 nested branches, try the [access review example](examples/access_review/).
 
@@ -71,62 +71,41 @@ by Neovim; deeper branches stay inside their ancestor’s fold. Native options
 like `foldlevelstart` still apply on later buffer entry. Other expressions
 are shown as source.
 
-`:QuintView` selects the module named after the file. `gd`, `K`, and `grr`
-work on indexed references in that module when a single attached LSP client
-supports the requested operation. `gd` also follows imported definitions into
-their source files; imported links do not yet support `K` or `grr`. This view
-does not use DML presentation rules.
+With no arguments, `:QuintView` selects the top-level operator or value at
+its definition name or inside its body. A local binding selects the
+surrounding top-level definition. Qualifiers such as `pure` and outer
+grouping punctuation may fall outside the mapped range.
 
-## Try an offline export
+Pass names to show definitions in order (`:QuintView review mayApprove`).
+Names are looked up in the module at the cursor. Outside a
+module, the viewer uses the only module in the file, or the one named after
+the file if there are several. If neither identifies a module, place the
+cursor inside one. Modules don't have to match the filename.
 
-From a checkout of this repo, use Python 3 and Quint 0.33.1 on `PATH`, or prefix
-the export command with `nix develop -c`:
+`gd`, `K`, and `grr` work on indexed references when a single attached LSP
+client supports the requested operation. `gd` also follows imported
+definitions; imported links do not yet support `K` or `grr`.
 
-```sh
-mkdir -p build
-python3 tools/export_model.py examples/approval.qnt review -o build/approval.qmodel.json
-nvim build/approval.qmodel.json
-```
+## Migrating from offline exports
 
-The viewer recognizes `*.qmodel.json` exports automatically; no extra setup
-is needed. Opening an export does not run Quint, Python, or an LSP server.
-The export contains a path relative to the artifact and a source checksum;
-keep the source in place for jumps, and regenerate the export after editing it.
-
-- Put the cursor on `allowed` and press **Enter** to inspect it.
-- Use `]s` and `[s` to move between symbols. Use `<C-w>l` to enter the inspector
-  (or `<C-w>j` if Neovim puts it below the graph).
-- Press **Enter** on an inspector entry to jump to its occurrence in the graph
-  or open its source line in another split. `q` closes the focused viewer pane.
-
-## Export your own model
-
-Pass the definition names you want to review, in display order. The exporter
-visualizes `if`/`else` at the decision-tree level and shows other expressions as
-source text. Select a module with `--module` if it differs from the filename.
-References are indexed within that module; imported definitions and record
-types other than `State` do not yet get full navigation.
-
-For the [DML](https://github.com/micha/dml) refs model, the optional profile
-expands the `Prediction` outcomes and shows the state fields each branch sets:
-
-```sh
-python3 tools/export_model.py ../dml/tests/ref_rules.qnt editRef finishTxn \
-  --profile dml-refs -o build/ref.qmodel.json
-```
+`*.qmodel.json` files now open as ordinary JSON. The offline inspector and
+`dml-refs` export profile were retired; use `:QuintView` from the saved Quint
+source instead. Graph rendering itself does not require an LSP server. If you
+still need the offline workflow, use the [last compatible commit
+(`8ff9ce7`)](https://github.com/micha/nvim-quint-viewer/tree/8ff9ce7).
 
 ## Develop
 
 New features and observable behavior changes follow the
 [Quint-first workflow](AGENTS.md#quint-first-development): verify the design
 before implementing it, then replay Quint histories against headless Neovim.
-See the [specification roadmap](spec/README.md) for the navigation, folding,
-and LSP lookup models. Run `nix develop .#spec -c scripts/check-spec.sh` to
+See the [specification roadmap](spec/README.md) for the selection, navigation,
+folding, and LSP lookup models. Run `nix develop .#spec -c scripts/check-spec.sh` to
 verify them independently of the plugin.
 
-`nix develop -c scripts/check.sh` checks deterministic export, artifact
-selection, and navigation, then replays offline navigation and native source
-folds against a clean plugin installation from the committed `HEAD`. Pass
-`--worktree` to test uncommitted changes. To also replay graph navigation and
-lookups with the real server, add `--with-lsp` with a compatible Quint CLI
-and server on `PATH`; see [the replay instructions](spec/README.md#replay-the-source-graph).
+`nix develop -c scripts/check.sh` checks deterministic graph generation and
+replays graph selection and native folds against a clean plugin installation
+from the committed `HEAD`. Pass `--worktree` to test uncommitted changes. To
+also replay navigation and lookups with the real server, add `--with-lsp`
+with a compatible Quint CLI and server on `PATH`; see the
+[replay instructions](spec/README.md#replay-the-source-graph).
