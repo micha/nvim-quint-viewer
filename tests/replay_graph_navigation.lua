@@ -63,11 +63,32 @@ local function press(keys)
   api.nvim_feedkeys(vim.keycode(keys), 'mx', false)
 end
 
+local headings = {['  ├─ Yes'] = 'Yes', ['  └─ No'] = 'No'}
+local function closed_branches()
+  local folded = {}
+  for row, line in ipairs(api.nvim_buf_get_lines(0, 0, -1, false)) do
+    if headings[line] and vim.fn.foldclosed(row) ~= -1 then
+      folded[#folded + 1] = headings[line]
+    end
+  end
+  return folded
+end
+
 local actions = {
   init = start,
   showGraph = function(operator)
     origin = nil
     api.nvim_cmd({cmd = 'QuintView', args = {operator}}, {})
+  end,
+  closeYesBranch = function()
+    for row, line in ipairs(api.nvim_buf_get_lines(0, 0, -1, false)) do
+      if headings[line] == 'Yes' then
+        api.nvim_win_set_cursor(0, {row, 0})
+        press('zc')
+        return
+      end
+    end
+    error('cannot find outer Yes heading in graph')
   end,
   positionOnCondition = function(symbol)
     for row, line in ipairs(api.nvim_buf_get_lines(0, 0, -1, false)) do
@@ -114,6 +135,7 @@ local function observe()
     windows = #api.nvim_list_wins(), focus = focus, modifiable = vim.bo[buf].modifiable,
     line = focus == 'source' and cursor[1] or 0, column = focus == 'source' and cursor[2] or 0,
     atOrigin = origin ~= nil and buf == origin.buf and vim.deep_equal(cursor, origin.cursor),
+    folded = focus == 'graph' and closed_branches() or {},
     definitionRequests = requests_sent, notices = notices,
   }
 end

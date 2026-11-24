@@ -47,7 +47,7 @@ local function export(path, names)
 end
 
 local function show(source, path, model)
-  local lines, targets = graph_view.rows(model, 'gd go to definition   <C-o> return from definition')
+  local lines, targets, folds = graph_view.rows(model, 'gd go to definition   <C-o> return   za toggle branch')
   local graph = api.nvim_create_buf(false, true)
   vim.bo[graph].bufhidden = 'hide' -- native jump history must be able to return to this buffer
   api.nvim_buf_set_lines(graph, 0, -1, false, lines)
@@ -129,6 +129,14 @@ local function show(source, path, model)
   end, { buffer = graph, silent = true, desc = 'Go to Quint definition' })
   -- Keep the saved document (and its LSP attachment) loaded even with 'nohidden'.
   api.nvim_cmd({cmd = 'buffer', args = {tostring(graph)}, mods = {hide = true}}, {})
+  vim.b[graph].quint_branch_folds = folds
+  local options = vim.wo[0][0]
+  options.foldexpr = "get(get(b:, 'quint_branch_folds', []), v:lnum - 1, 0)"
+  options.foldtext = "getline(v:foldstart) .. ' …'"
+  options.foldmethod = 'expr'
+  options.foldminlines = 1
+  options.foldenable = true
+  options.foldlevel = 99
 end
 
 function M.open(names)

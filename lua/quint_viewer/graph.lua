@@ -1,4 +1,5 @@
 local M = {}
+local max_fold_depth = 20 -- Neovim's native limit, including expression folds.
 
 function M.decode(text)
   local model = vim.json.decode(text)
@@ -12,7 +13,8 @@ function M.decode(text)
 end
 
 function M.rows(model, legend)
-  local lines, targets = {}, {}
+  local lines, targets, folds = {}, {}, {}
+  local depth = 0
   local function row(text, ...)
     local refs = {}
     for i = 1, select('#', ...) do
@@ -25,6 +27,7 @@ function M.rows(model, legend)
     end
     lines[#lines + 1] = text
     targets[#lines] = refs
+    folds[#lines] = math.min(depth, max_fold_depth)
   end
   local function literal(text) return {{text = text}} end
   local function walk(node, prefix)
@@ -33,10 +36,17 @@ function M.rows(model, legend)
     end
     if node.guard then
       row(prefix .. 'IF ', node.guard)
-      row(prefix .. '├─ Yes')
-      walk(node.yes, prefix .. '│  ')
-      row(prefix .. '└─ No')
-      walk(node.no, prefix .. '   ')
+      local function branch(heading, indent, child)
+        depth = depth + 1
+        row(prefix .. heading)
+        -- Separate siblings at the same depth. Deeper headings belong to
+        -- their ancestor's fold instead of starting a sibling at the limit.
+        if depth <= max_fold_depth then folds[#lines] = '>' .. depth end
+        walk(child, prefix .. indent)
+        depth = depth - 1
+      end
+      branch('├─ Yes', '│  ', node.yes)
+      branch('└─ No', '   ', node.no)
     elseif node.outcome then
       local outcome = node.outcome
       row(prefix .. 'Status: ', outcome.status, literal('    Label: '), outcome.label)
@@ -64,7 +74,7 @@ function M.rows(model, legend)
     row(graph.title)
     walk(graph.tree, '  ')
   end
-  return lines, targets
+  return lines, targets, folds
 end
 
 return M

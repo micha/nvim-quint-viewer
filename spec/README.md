@@ -1,11 +1,10 @@
 # Viewer specification roadmap
 
-The viewer has two independently verified workflows for `review` from
-[the approval example](../examples/approval.qnt): [offline Definition links](source_navigation.qnt)
-and [definition jumps from a read-only source graph](graph_navigation.qnt).
-For both, a thin interpreter drives the public plugin commands and keymaps
-and records observations. Quint judges those observations against the same
-transition rules that produced the histories.
+The viewer has verified models for [offline Definition links](source_navigation.qnt),
+[definition jumps from a read-only source graph](graph_navigation.qnt), and
+[native branch folding in the source graph](branch_folding.qnt). A thin interpreter
+drives public commands and keys and records observations. Quint judges those
+observations against the same transition rules that produced the histories.
 
 ## Source navigation
 
@@ -35,9 +34,10 @@ nix develop .#spec -c scripts/check-spec.sh
 The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 0.62.4 distribution that Quint uses for TLC. The script runs `quint verify`
 with TLC over the complete finite model (no trace-length cap), then runs
-the named histories in both models and checks each emits a trace. TLC
-explores 19 reachable states for offline navigation and 14 for the source
-graph. These checks verify the models, not the plugin implementation.
+the named histories in each model and checks each emits a trace. TLC
+explores 19 reachable states for offline navigation, 27 for source graph
+navigation, and 103 for branch folding. These checks verify the models,
+not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
 local endpoint (for example, `127.0.0.1:8823`).
@@ -84,7 +84,8 @@ replaces the window's view with a read-only graph; it leaves source editable.
 On `allowed` in the `IF allowed` row, `gd` asks the attached Quint language
 server for the definition and lands on its name (line 9, byte column 8,
 counting columns from zero). `Ctrl-O` restores the exact graph buffer and
-cursor, without opening a split.
+cursor, without opening a split. With default Neovim fold options, `Yes`
+stays closed and `No` stays open if the jump started with `Yes` folded.
 
 An unsaved edit or a disk edit after graph generation leaves the old graph
 readable. `gd` stays at the occurrence and emits one warning, without sending
@@ -117,9 +118,33 @@ with the same tools on `PATH`.
 
 [The Lua interpreter](../tests/replay_graph_navigation.lua) observes actual
 window count, focus, source coordinates, modifiability, the exact graph
-cursor, notices, and outgoing definition requests. It waits for the server's
-parse/analysis publications before testing navigation, and waits for any
+cursor, visible closed branches, notices, and outgoing definition requests.
+It waits for the server's parse/analysis publications before testing navigation, and waits for any
 requests sent to complete. [The Python driver](../tests/replay_graph_navigation.py)
 feeds the observations back to Quint. Two negative controls keep the other
 observations fixed: report a wrong return cursor, or report one request from
 a stale graph. Both must be rejected during testing.
+
+## Native branch folding
+
+In `:QuintView`, explicit `if`/`else` branches start expanded. A `Yes` or `No`
+heading is the first line of its fold. Closing a branch hides its body but
+keeps the heading visible. Siblings fold independently; opening a parent
+restores the previous open or closed state of its children.
+
+[The model](branch_folding.qnt) covers a graph with an inner decision in the
+outer `Yes` branch and a single-line outer `No` body. It exercises `zc` on open
+headings, `zo` on closed headings, and `za` on either. A separate deep graph
+checks that the level-20 fold includes its entire subtree even when some
+branches exceed Neovim's native nesting limit. Counts, other native fold
+commands, multiple windows, and non-default fold policies are outside the model.
+
+`scripts/check.sh` replays the histories without an LSP server. The
+[interpreter](../tests/replay_branch_folding.lua) presses the native keys and
+observes the closed ranges and their displayed headings. The negative control
+reports a real view with both outer branches closed where only `Yes` should
+have closed. Quint must reject it. To run just this replay against local edits:
+
+```sh
+nix develop -c python3 -B tests/replay_branch_folding.py --worktree
+```

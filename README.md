@@ -51,11 +51,17 @@ the real `.qnt` buffer is unchanged and still editable. If source changes,
 the old graph stays readable but refuses new definition lookups. Save or reload
 the source, then run `:QuintView review` again from it.
 
-This first version visualizes explicit `if`/`else` branches and shows other
-expressions as source. `:QuintView` selects the module named after the file;
-`gd` works on underlined, indexed references in that module when a single
-definition-capable LSP client is attached. Graph hover, references, and import
-navigation are not implemented yet. This route does not use DML presentation rules.
+Explicit `if`/`else` branches start expanded. On a `Yes` or `No` heading,
+press `za` to toggle that branch, `zc` to close it, or `zo` to open it. A closed
+branch keeps its heading visible. Independent folds are limited to 20 levels
+by Neovim; deeper branches stay inside their ancestor’s fold. Native options
+like `foldlevelstart` still apply on later buffer entry. Other expressions
+are shown as source.
+
+`:QuintView` selects the module named after the file. `gd` works on underlined,
+indexed references in that module when a single definition-capable LSP client
+is attached. Graph hover, references, and import navigation are not implemented
+yet. This route does not use DML presentation rules.
 
 ## Try an offline export
 
@@ -100,13 +106,13 @@ python3 tools/export_model.py ../dml/tests/ref_rules.qnt editRef finishTxn \
 New features and observable behavior changes follow the
 [Quint-first workflow](AGENTS.md#quint-first-development): verify the design
 before implementing it, then replay Quint histories against headless Neovim.
-See the [specification roadmap](spec/README.md) for the two navigation models.
-Run `nix develop .#spec -c scripts/check-spec.sh` to verify them independently
-of the plugin.
+See the [specification roadmap](spec/README.md) for the navigation and folding
+models. Run `nix develop .#spec -c scripts/check-spec.sh` to verify them
+independently of the plugin.
 
 `nix develop -c scripts/check.sh` checks deterministic export, artifact
-selection, and navigation, then replays the offline histories against a clean
-plugin installation from the committed `HEAD`. Pass `--worktree` to test
-uncommitted changes. To also replay the source graph with the real server,
-add `--with-lsp` with a compatible Quint CLI and server on `PATH`; see
-[the replay instructions](spec/README.md#replay-the-source-graph).
+selection, and navigation, then replays offline navigation and native source
+folds against a clean plugin installation from the committed `HEAD`. Pass
+`--worktree` to test uncommitted changes. To also replay graph navigation with
+the real server, add `--with-lsp` with a compatible Quint CLI and server on
+`PATH`; see [the replay instructions](spec/README.md#replay-the-source-graph).
