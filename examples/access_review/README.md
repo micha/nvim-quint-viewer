@@ -16,5 +16,8 @@ Leave `policy.qnt` unopened to try a jump into a file you haven't visited yet.
 
 To try the stale-graph warning, make an unsaved edit to `access_review.qnt`
 from another window while the graph is open. Back in the graph, `gd` on
-`org::allowed` warns and stays put. Undo or save the edit, then build a fresh
-view with `:QuintView review` from the source window.
+`org::allowed` warns and stays put. Or edit only `policy.qnt`: the imported
+jump is blocked, but the local `allowed` jump still works. Save or reload the
+affected files, then build a fresh graph with `:QuintView review` from
+`access_review.qnt`. If the server still returns the old destination, run
+`:lsp restart quint` from `access_review.qnt` and try again.

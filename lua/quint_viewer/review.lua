@@ -4,19 +4,6 @@ local graph_view = require('quint_viewer.graph')
 local marks = api.nvim_create_namespace('quint-review-links')
 local lsp_util = vim.lsp.util
 
-local function show_definition(result, client)
-  if vim.islist(result) then
-    if #result > 1 then
-      vim.notify('Quint definition lookup returned multiple locations.', vim.log.levels.WARN)
-      return
-    end
-    result = result[1]
-  end
-  if type(result) ~= 'table' or not lsp_util.show_document(result, client.offset_encoding, {reuse_win = false}) then
-    vim.notify('No Quint definition found.', vim.log.levels.INFO)
-  end
-end
-
 local function show_hover(result)
   local contents = type(result) == 'table' and result.contents
   local format = type(contents) == 'table' and contents.kind == 'plaintext' and 'plaintext' or 'markdown'
@@ -49,8 +36,8 @@ local function read_file(path)
   return bytes
 end
 
-local function matches_buffer(buf, path, bytes)
-  if not api.nvim_buf_is_loaded(buf) or api.nvim_buf_get_name(buf) ~= path or vim.bo[buf].modified then
+local function matches_buffer(buf, bytes)
+  if not api.nvim_buf_is_loaded(buf) or vim.bo[buf].buftype ~= '' or vim.bo[buf].modified then
     return false
   end
   -- A loaded buffer can be clean but older than the file on disk. Compare the
@@ -66,7 +53,52 @@ end
 
 local function fresh(buf, path, fingerprint)
   local bytes = read_file(path)
-  return bytes and vim.fn.sha256(bytes) == fingerprint and matches_buffer(buf, path, bytes)
+  return bytes and vim.fn.sha256(bytes) == fingerprint
+    and matches_buffer(buf, bytes) and api.nvim_buf_get_name(buf) == path
+end
+
+local function fresh_target(target)
+  local bytes = read_file(target.path)
+  if not bytes or vim.fn.sha256(bytes) ~= target.sha256 then return false end
+  local buf = vim.fn.bufadd(target.path)
+  return buf > 0 and (not api.nvim_buf_is_loaded(buf) or matches_buffer(buf, bytes))
+end
+
+local function warn_stale()
+  vim.notify('Quint graph is stale; save or reload the affected files and run :QuintView again.', vim.log.levels.WARN)
+end
+
+local function show_definition(result, client, target, can_jump)
+  if vim.islist(result) then
+    if #result > 1 then
+      vim.notify('Quint definition lookup returned multiple locations.', vim.log.levels.WARN)
+      return
+    end
+    result = result[1]
+  end
+  if target and type(result) == 'table' then
+    local uri = result.uri or result.targetUri
+    local range = result.range or result.targetSelectionRange
+    local start = type(range) == 'table' and range.start
+    local path = type(uri) == 'string' and vim.startswith(uri, 'file:') and vim.uri_to_fname(uri)
+    local resolved = path and vim.uv.fs_realpath(path)
+    -- Quint can retain the old import positions even after the graph is rebuilt.
+    if not resolved or resolved ~= vim.uv.fs_realpath(target.path)
+      or type(start) ~= 'table' or start.line ~= target.line - 1
+      or type(start.character) ~= 'number' or start.character < 0 or start.character % 1 ~= 0 then
+      vim.notify('Quint language server definition is stale; restart the Quint LSP and try again.', vim.log.levels.WARN)
+      return
+    end
+    -- Load and jump through the same path we verified, not a server-supplied alias.
+    result = {uri = vim.uri_from_fname(target.path), range = range}
+    local buf = vim.uri_to_bufnr(result.uri)
+    vim.fn.bufload(buf)
+    if not can_jump() then return end
+    if not api.nvim_buf_is_loaded(buf) then warn_stale(); return end
+  end
+  if type(result) ~= 'table' or not lsp_util.show_document(result, client.offset_encoding, {reuse_win = false}) then
+    vim.notify('No Quint definition found.', vim.log.levels.INFO)
+  end
 end
 
 local function export(path, names)
@@ -91,20 +123,25 @@ local function show(source, path, model)
   api.nvim_buf_set_lines(graph, 0, -1, false, lines)
   vim.bo[graph].modifiable = false
   vim.bo[graph].filetype = 'qmodelgraph'
+  local source_dir = vim.fs.dirname(vim.uv.fs_realpath(path) or path)
   for row, refs in ipairs(targets) do
     for _, ref in ipairs(refs) do
       local use = ref.use and model.uses[ref.use]
       ref.position = use and use.position
-      if ref.position or ref.definition_occurrence then
+      if ref.definition_target then
+        ref.definition_target.path = vim.fs.normalize(vim.fs.joinpath(source_dir, ref.definition_target.path),
+          {expand_env = false})
+      end
+      if ref.position or (ref.definition_occurrence and ref.definition_target) then
         api.nvim_buf_set_extmark(graph, marks, row - 1, ref.col,
           {end_col = ref.end_col, hl_group = 'Underlined'})
       end
     end
   end
 
-  local function check_fresh()
-    if fresh(source, path, model.source.sha256) then return true end
-    vim.notify('Quint graph is stale; save or reload the source and run :QuintView again.', vim.log.levels.WARN)
+  local function check_fresh(target)
+    if fresh(source, path, model.source.sha256) and (not target or fresh_target(target)) then return true end
+    warn_stale()
     return false
   end
 
@@ -115,14 +152,21 @@ local function show(source, path, model)
     local request = request_number
     local origin_win = api.nvim_get_current_win()
     local cursor = api.nvim_win_get_cursor(origin_win)
-    local position
+    local function still_at_origin()
+      return request == request_number and api.nvim_get_current_win() == origin_win
+        and api.nvim_get_current_buf() == graph and vim.deep_equal(api.nvim_win_get_cursor(origin_win), cursor)
+    end
+    local position, target
     for _, ref in ipairs(targets[cursor[1]] or {}) do
       if ref.col <= cursor[2] and cursor[2] < ref.end_col then
-        position = ref.position or (kind == 'definition' and ref.definition_occurrence)
+        position = ref.position
+        if not position and kind == 'definition' and ref.definition_target then
+          position, target = ref.definition_occurrence, ref.definition_target
+        end
         break
       end
     end
-    if not position or not check_fresh() then return end
+    if not position or not check_fresh(target) then return end
 
     local clients = vim.lsp.get_clients({ bufnr = source, method = method })
     if #clients ~= 1 then
@@ -144,17 +188,16 @@ local function show(source, path, model)
       },
     }
     if kind == 'references' then params.context = {includeDeclaration = true} end
+    local function can_jump()
+      return still_at_origin() and check_fresh(target)
+    end
     local sent = client:request(method, params, function(err, result)
-      if request ~= request_number or api.nvim_get_current_win() ~= origin_win
-        or api.nvim_get_current_buf() ~= graph or not vim.deep_equal(api.nvim_win_get_cursor(origin_win), cursor) then
-        return
-      end
-      if not check_fresh() then return end
+      if not can_jump() then return end
       if err then
         vim.notify(('Quint %s lookup failed: %s'):format(kind, err.message), vim.log.levels.WARN)
         return
       end
-      display(result, client)
+      display(result, client, target, can_jump)
     end, source)
     if not sent then vim.notify(('Could not send Quint %s lookup.'):format(kind), vim.log.levels.WARN) end
   end
@@ -183,7 +226,7 @@ function M.open(names)
     local path = api.nvim_buf_get_name(source)
     assert(vim.bo[source].buftype == '' and vim.endswith(path, '.qnt'), 'open a saved .qnt file first')
     local bytes = read_file(path)
-    assert(bytes and matches_buffer(source, path, bytes), 'save or reload the Quint source first')
+    assert(bytes and matches_buffer(source, bytes), 'save or reload the Quint source first')
     local model = export(path, names)
     assert(model.source.sha256 == vim.fn.sha256(bytes) and fresh(source, path, model.source.sha256),
       'the Quint source changed while building the graph; run :QuintView again')

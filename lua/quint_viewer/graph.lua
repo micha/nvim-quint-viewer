@@ -22,7 +22,8 @@ function M.rows(model, legend, source_review)
         local position = source_review and part.position or nil
         if part.symbol or position then
           refs[#refs + 1] = {col = #text, end_col = #text + #part.text,
-            symbol = part.symbol, use = part.use, definition_occurrence = position}
+            symbol = part.symbol, use = part.use, definition_occurrence = position,
+            definition_target = position and part.definition_target or nil}
         end
         text = text .. part.text
       end

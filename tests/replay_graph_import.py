@@ -13,9 +13,15 @@ SPEC = ROOT / 'spec/graph_import.qnt'
 FIXTURE = ROOT / 'tests/fixtures/graph_import'
 IMPORTED = 'importedDefinitionAndBackTest'
 LOCAL = 'localDefinitionAndBackTest'
-HISTORIES = {IMPORTED, LOCAL, 'dirtyCallerRefusesImportedDefinitionTest'}
+MOVED = 'movedPolicyRefreshTest'
+HISTORIES = {
+    IMPORTED, LOCAL, MOVED, 'dirtyCallerRefusesImportedDefinitionTest',
+    'movedPolicyRefusesImportedDefinitionTest', 'dirtyPolicyRefusesImportedDefinitionTest',
+    'movedPolicyDoesNotBlockLocalDefinitionTest',
+}
 WRONG_LOCAL = 'sameNamedLocalDefinitionRejectedTest'
 WRONG_FILE = 'wrongDefinitionFileRejectedTest'
+OLD_LINE = 'oldImportedDefinitionLineRejectedTest'
 
 
 def replay(directory, worktree):
@@ -49,11 +55,18 @@ def replay(directory, worktree):
         # Exercise the normal assertion path; retain all other observations.
         tests.append(verdict_test(name, requests, [*imported[:index], landing, *imported[index + 1:]]))
 
+    moved_requests, moved = replays[MOVED]
+    moved_index = max(i for i, request in enumerate(moved_requests) if request == follow)
+    old_landing = {**moved[moved_index], 'line': imported[index]['line']}
+    tests.append(verdict_test(OLD_LINE, moved_requests,
+                              [*moved[:moved_index], old_landing, *moved[moved_index + 1:]]))
+
     verdicts = directory / 'graph_import_verdicts.qnt'
     verdicts.write_text('\n\n'.join(tests) + '\n}\n', encoding='utf-8')
     check_verdicts(verdicts, directory / 'verdicts', names)
     check_rejection(verdicts, WRONG_LOCAL)
     check_rejection(verdicts, WRONG_FILE)
+    check_rejection(verdicts, OLD_LINE)
 
 
 def main():

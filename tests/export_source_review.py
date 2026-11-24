@@ -1,5 +1,6 @@
 """Check that source projections use exact byte positions and generic record handling."""
 
+from hashlib import sha256
 import json
 import subprocess
 import sys
@@ -48,8 +49,12 @@ if __name__ == '__main__':
         guard = model['graphs'][0]['tree']['guard']
         assert ''.join(part['text'] for part in guard) == 'remote::allowed(ok)', guard
         links = [part for part in guard if 'position' in part]
-        expected = [{'text': 'remote::allowed', 'position': {'line': 6, 'column': 8}}] if flags else []
+        target_hash = sha256(source.with_name('policy.qnt').read_bytes()).hexdigest()
+        expected = [{
+            'text': 'remote::allowed', 'position': {'line': 6, 'column': 8},
+            'definition_target': {'path': 'policy.qnt', 'line': 2, 'sha256': target_hash},
+        }] if flags else []
         assert links == expected, links
         # Both modes keep their inspector index self-contained.
         assert all(use['target'] in model['symbols'] for use in model['uses'].values())
-    print('Imported occurrences are definition links in source review only.')
+    print('Imported occurrences and their destination fingerprints are source-review only.')

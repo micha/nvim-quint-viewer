@@ -24,8 +24,9 @@ def type_text(node):
 
 
 class Index:
-    def __init__(self, defs, offsets, source, checked, *, source_review=False):
+    def __init__(self, defs, offsets, source, checked, *, source_review=False, review_definitions=None):
         self.source = source
+        self.review_definitions = review_definitions or {}
         self.offsets = offsets
         self.table = checked['table']
         self.types = checked['types']
@@ -149,10 +150,11 @@ class Index:
                 fragment = {'text': label, 'symbol': target}
                 if use is not None:
                     fragment['use'] = use
-            elif self.line_starts is not None and use is not None:
-                # The target is outside the symbol index. In source review, the
-                # LSP only needs the resolved reference's position in the caller.
-                fragment = {'text': label, 'position': self.position(offset)}
+            elif use in self.review_definitions:
+                # The LSP resolves this occurrence, but its answer must agree
+                # with the compiler's declaration in the saved source.
+                fragment = {'text': label, 'position': self.position(offset),
+                            'definition_target': self.review_definitions[use]}
             else:
                 continue
             yield {'text': self.source[cursor:offset]}

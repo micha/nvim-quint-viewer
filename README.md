@@ -56,9 +56,13 @@ nested branches, try the [access review example](examples/access_review/).
   Press Enter on an entry to visit it, or use `:lclose` to close the list.
 
 If the file you built the graph from changes, the old graph stays readable
-but refuses new lookups. Save or reload that file, then run `:QuintView review`
-again. The viewer does not track changes to imported files or refresh
-location lists already returned by the server.
+but refuses new lookups. For `gd` on an imported definition, the viewer also
+checks that definition's file. An edited or unavailable destination blocks
+that jump without blocking local lookups. Save or reload any affected files,
+then rebuild the graph with `:QuintView review` from the caller. If the server
+still returns the old definition location, restart it from the caller with
+`:lsp restart quint`, wait for it to analyze the file, and try again. The
+viewer does not refresh location lists already returned by the server.
 
 Explicit `if`/`else` branches start expanded. On a `Yes` or `No` heading,
 press `za` to toggle that branch, `zc` to close it, or `zo` to open it. A closed

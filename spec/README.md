@@ -134,16 +134,25 @@ a stale graph. Both must be rejected during testing.
 [import fixture](../tests/fixtures/graph_import): `remote::allowed` lands on
 the definition line in `policy.qnt`, and bare `allowed` lands on the local
 definition in `caller.qnt`. Neither opens a split, and `Ctrl-O` restores the
-original graph buffer and exact cursor in the same window. A dirty caller
-leaves the graph readable but warns once without sending a definition request.
+original graph buffer and exact cursor in the same window. A dirty caller,
+a dirty imported buffer, or an on-disk edit to the imported definition file
+makes the affected jump warn once without sending a request. Editing the
+import does not block the local jump.
 
-TLC checks all 12 reachable states without a trace-length bound. The replay
-starts with the imported file unopened and delegates the imported destination
-column to the server. It checks exact fixture file paths, not basenames.
-Changes to imported files, concurrent requests, and transitive imports are
-outside this slice. The controls substitute the actual same-named local
-landing and, separately, change only the destination file; Quint must reject
-both through the normal replay assertions.
+On rebuild after an on-disk move, the graph knows the new declaration line,
+but the server can still reply with the old location. This reply warns and
+leaves focus on the graph. Restarting the server from the caller and rebuilding
+the graph recovers the jump to the new line and the exact `Ctrl-O` return.
+
+TLC checks all 39 reachable states without a trace-length bound. The replay
+starts with the imported file unopened and checks the exact fixture file path
+and declaration line, leaving the imported destination column to the server.
+It covers one direct import and either an unsaved edit or a disk move; changes
+while requests are in flight, exact imported columns, and transitive import
+invalidation are outside this slice. The controls substitute the actual
+same-named local landing, change only the destination file, or replace only
+the moved declaration line with its old line. Quint must reject each through
+the normal replay assertions.
 
 With the tools above, run `scripts/check.sh --worktree --with-lsp` or just
 `python3 -B tests/replay_graph_import.py --worktree`.

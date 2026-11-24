@@ -13,19 +13,35 @@ from tempfile import TemporaryDirectory
 from symbol_index import Index
 
 
-def load_ir(quint, source, module_name):
+def load_ir(quint, source, module_name, raw, *, source_review=False):
     with TemporaryDirectory() as tmp:
         ir = Path(tmp) / 'model.json'
         locations = Path(tmp) / 'locations.json'
-        subprocess.run([quint, 'parse', str(source), '--out', str(ir), '--source-map', str(locations)],
-                       check=True)
-        parsed = json.loads(ir.read_text())
-        if parsed.get('errors'):
-            raise ValueError(f'Quint parse failed: {parsed["errors"]}')
+
+        def parse():
+            subprocess.run([quint, 'parse', str(source), '--out', str(ir), '--source-map', str(locations)],
+                           check=True)
+            parsed = json.loads(ir.read_text())
+            if parsed.get('errors'):
+                raise ValueError(f'Quint parse failed: {parsed["errors"]}')
+            return parsed, json.loads(locations.read_text())
+
+        parsed, index = parse()
+        fingerprints = {}
+        if source_review:
+            files = {Path(path) for path in index['sourceIndex'].values()}
+            fingerprints = {path: sha256(raw if path == source else path.read_bytes()).hexdigest()
+                            for path in files}
+            if files - {source}:
+                # The first parse discovers imports. Parse again after capturing
+                # their fingerprints so an old map isn't paired with new bytes.
+                parsed, index = parse()
+                if {Path(path) for path in index['sourceIndex'].values()} != files:
+                    raise ValueError('Quint imports changed while building the graph; run :QuintView again')
+
         modules = [module for module in parsed['modules'] if module['name'] == module_name]
         if len(modules) != 1:
             raise ValueError(f'expected one module named {module_name!r}; use --module to select it')
-        index = json.loads(locations.read_text())
         source_ids = {int(key) for key, path in index['sourceIndex'].items() if Path(path).resolve() == source}
         offsets = {key: span for key, span in index['map'].items() if span[0] in source_ids}
         definitions = {node['name']: node for node in modules[0]['declarations'] if 'name' in node}
@@ -35,7 +51,23 @@ def load_ir(quint, source, module_name):
         checked = json.loads(ir.read_text())
         if checked.get('errors'):
             raise ValueError(f'Quint typecheck failed: {checked["errors"]}')
-        return definitions, offsets, checked
+        for path, fingerprint in fingerprints.items():
+            if sha256(path.read_bytes()).hexdigest() != fingerprint:
+                raise ValueError('Quint source changed while building the graph; run :QuintView again')
+        targets = review_targets(parsed, index, source, fingerprints) if source_review else {}
+        return definitions, offsets, checked, targets
+
+
+def review_targets(parsed, index, source, fingerprints):
+    targets = {}
+    for use, binding in parsed['table'].items():
+        span = index['map'].get(str(binding['id']))
+        if use in index['map'] and span:
+            file_id, start, _ = span
+            file = Path(index['sourceIndex'][str(file_id)])
+            targets[use] = dict(path=relpath(file, source.parent), line=start['line'] + 1,
+                                sha256=fingerprints[file])
+    return targets
 
 
 class Exporter:
@@ -151,8 +183,10 @@ def main():
     try:
         raw = source.read_bytes()
         text = raw.decode('utf-8')
-        definitions, offsets, checked = load_ir(args.quint, source, module)
-        index = Index(definitions, offsets, text, checked, source_review=args.source_review)
+        definitions, offsets, checked, review_definitions = load_ir(
+            args.quint, source, module, raw, source_review=args.source_review)
+        index = Index(definitions, offsets, text, checked, source_review=args.source_review,
+                      review_definitions=review_definitions)
         exporter = Exporter(definitions, index, args.profile)
         output = args.output.resolve()
         artifact = {
