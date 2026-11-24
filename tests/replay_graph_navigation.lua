@@ -122,7 +122,7 @@ local actions = {
     api.nvim_win_set_cursor(0, {1, 0})
     parseReady(before)
   end,
-  followDefinition = function() press('gd') end,
+  followDefinition = function() press('gD') end,
   back = function() press('<C-o>') end,
 }
 

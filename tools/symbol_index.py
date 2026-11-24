@@ -61,12 +61,13 @@ class Index:
             if stop > end:
                 continue
             fragment = {'text': label, 'position': self.position(offset)}
-            if target not in self.local_ids:
-                definition_target = self.definition_targets.get(key)
-                if not definition_target:
-                    continue
-                # The LSP's response must agree with the compiler's destination.
-                fragment['definition_target'] = definition_target
+            requires_imports = target not in self.local_ids
+            definition_target = self.definition_targets.get(key)
+            if requires_imports and not definition_target:
+                continue
+            if definition_target and (requires_imports or definition_target['renderable']):
+                # Graph jumps verify the compiler's destination even for local links.
+                fragment['definition_target'] = {**definition_target, 'requires_imports': requires_imports}
             yield {'text': self.source[cursor:offset]}
             yield fragment
             cursor = stop

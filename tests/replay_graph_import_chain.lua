@@ -113,7 +113,7 @@ local function press(keys)
   api.nvim_feedkeys(api.nvim_replace_termcodes(keys, true, false, true), 'mx', false)
 end
 
-local keys = {definition = 'gd', hover = 'K', references = 'grr'}
+local keys = {definition = 'gD', hover = 'K', references = 'grr'}
 
 local function redirect(lines)
   -- Redirect the re-export to the other module without changing either endpoint file.

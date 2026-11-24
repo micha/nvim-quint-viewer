@@ -41,14 +41,16 @@ def select_module(modules, offsets, module_name, stem, cursor, names):
     return candidates[0]
 
 
-def select_at_cursor(definitions, offsets, cursor):
+def select_at_cursor(definitions, offsets, cursor, declaration_only=False):
+    no_match = ('no top-level operator or value starts at the declaration position'
+                if declaration_only else NO_DEFINITION)
     # The compiler also emits `def`s for variant constructors. Cursor selection
     # should not mistake the text of a type declaration for an operator body.
     for node in definitions.values():
         if node['kind'] == 'typedef':
             _, start, end = offsets[str(node['id'])]
             if start['index'] <= cursor <= end['index']:
-                raise ValueError(NO_DEFINITION)
+                raise ValueError(no_match)
     names = []
     for name, node in definitions.items():
         if node['kind'] != 'def':
@@ -56,15 +58,15 @@ def select_at_cursor(definitions, offsets, cursor):
         # A definition's ID maps to its name, not its whole declaration. The
         # expression span supplies the other bound (including nested bindings).
         start = offsets[str(node['id'])][1]['index']
-        end = offsets[str(node['expr']['id'])][2]['index']
+        end = start if declaration_only else offsets[str(node['expr']['id'])][2]['index']
         if start <= cursor <= end:
             names.append(name)
     if len(names) != 1:
-        raise ValueError(NO_DEFINITION)
+        raise ValueError(no_match)
     return names
 
 
-def load_ir(quint, source, module_name, raw, cursor, names):
+def load_ir(quint, source, module_name, raw, cursor, names, declaration_only):
     with TemporaryDirectory() as tmp:
         ir = Path(tmp) / 'model.json'
         locations = Path(tmp) / 'locations.json'
@@ -96,7 +98,7 @@ def load_ir(quint, source, module_name, raw, cursor, names):
         if any(str(node['id']) not in offsets for node in definitions.values()):
             raise ValueError('selected module must be defined in the input file')
         if not names:
-            names = select_at_cursor(definitions, offsets, cursor)
+            names = select_at_cursor(definitions, offsets, cursor, declaration_only)
         subprocess.run([quint, 'typecheck', str(source), '--out', str(ir)], check=True)
         checked = json.loads(ir.read_text())
         if checked.get('errors'):
@@ -112,8 +114,27 @@ def load_ir(quint, source, module_name, raw, cursor, names):
         return module['name'], names, definitions, offsets, checked, targets, imports
 
 
+def source_definition_ids(modules, spans):
+    ids = set()
+    for module in modules:
+        declarations = module['declarations']
+        typedefs = [spans[str(node['id'])] for node in declarations
+                    if node['kind'] == 'typedef' and str(node['id']) in spans]
+        for node in declarations:
+            span = spans.get(str(node['id']))
+            if node['kind'] != 'def' or not span:
+                continue
+            file_id, start, _ = span
+            # Synthetic variant constructors are not standalone source definitions.
+            if not any(file_id == file and begin['index'] <= start['index'] <= end['index']
+                       for file, begin, end in typedefs):
+                ids.add(node['id'])
+    return ids
+
+
 def review_targets(parsed, index, source, contents):
     lines = {file: raw.decode('utf-8').split('\n') for file, raw in contents.items()}
+    renderable = source_definition_ids(parsed['modules'], index['map'])
     targets = {}
     for use, binding in parsed['table'].items():
         span = index['map'].get(str(binding['id']))
@@ -122,7 +143,8 @@ def review_targets(parsed, index, source, contents):
             file = Path(index['sourceIndex'][str(file_id)])
             line = lines[file][start['line']]
             column = len(line[:start['col']].encode('utf-8'))
-            targets[use] = dict(path=relpath(file, source.parent), line=start['line'] + 1, column=column)
+            targets[use] = dict(path=relpath(file, source.parent), line=start['line'] + 1, column=column,
+                                renderable=binding['id'] in renderable)
     return targets
 
 
@@ -167,7 +189,11 @@ def main():
     parser.add_argument('--cursor', type=int, metavar='BYTE_OFFSET',
                         help='zero-based byte offset in the saved source')
     parser.add_argument('--quint', default='quint', help='Quint CLI executable')
+    parser.add_argument('--declaration', action='store_true',
+                        help='require the cursor to be at a top-level definition name start')
     args = parser.parse_args()
+    if args.declaration and (args.definitions or args.cursor is None):
+        parser.error('--declaration requires a cursor position and no definition names')
     if not args.definitions and args.cursor is None:
         parser.error('provide definition names or a cursor position')
     source = args.source.resolve()
@@ -176,11 +202,11 @@ def main():
         text = raw.decode('utf-8')
         cursor = cursor_index(raw, args.cursor) if args.cursor is not None else None
         module, names, definitions, offsets, checked, definition_targets, imports = load_ir(
-            args.quint, source, args.module, raw, cursor, args.definitions)
+            args.quint, source, args.module, raw, cursor, args.definitions, args.declaration)
         index = Index(definitions, offsets, text, checked['table'], definition_targets)
         exporter = Exporter(definitions, index)
         model = {
-            'format': 'quint-decision-model', 'version': 4, 'module': module,
+            'format': 'quint-decision-model', 'version': 5, 'module': module,
             'source': {'sha256': sha256(raw).hexdigest()}, 'imports': imports,
             'graphs': [exporter.graph(name) for name in names],
         }

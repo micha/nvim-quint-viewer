@@ -46,6 +46,7 @@ python3 -B "$root/tests/replay_graph_selection.py" "$@"
 python3 -B "$root/tests/replay_branch_folding.py" "$@"
 if [ -n "$with_lsp" ]; then
   python3 -B "$root/tests/replay_graph_navigation.py" "$@"
+  python3 -B "$root/tests/replay_graph_definition_mode.py" "$@"
   python3 -B "$root/tests/replay_graph_lookups.py" "$@"
   python3 -B "$root/tests/replay_graph_import.py" "$@"
   python3 -B "$root/tests/replay_graph_import_hover.py" "$@"

@@ -9,8 +9,8 @@ end
 
 function M.decode(text)
   local model = vim.json.decode(text)
-  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 4,
-    'expected a quint-decision-model v4 projection')
+  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 5,
+    'expected a quint-decision-model v5 projection')
   assert(type(model.source) == 'table' and type(model.source.sha256) == 'string'
     and type(model.graphs) == 'table' and type(model.module) == 'string'
     and type(model.imports) == 'table', 'projection is missing model data')
@@ -23,7 +23,7 @@ end
 
 function M.rows(model, legend)
   local lines, targets, folds = {}, {}, {}
-  local depth = 0
+  local depth, first_heading = 0, nil
   local function row(text, parts)
     local refs = {}
     for _, part in ipairs(parts or {}) do
@@ -32,7 +32,8 @@ function M.rows(model, legend)
         if target then
           assert(type(target) == 'table' and relative_path(target.path)
             and type(target.line) == 'number' and target.line >= 1 and target.line % 1 == 0
-            and type(target.column) == 'number' and target.column >= 0 and target.column % 1 == 0,
+            and type(target.column) == 'number' and target.column >= 0 and target.column % 1 == 0
+            and type(target.renderable) == 'boolean' and type(target.requires_imports) == 'boolean',
             'projection has an invalid definition position')
         end
         refs[#refs + 1] = {col = #text, end_col = #text + #part.text,
@@ -70,9 +71,10 @@ function M.rows(model, legend)
   for _, graph in ipairs(model.graphs) do
     row('')
     row(graph.title)
+    first_heading = first_heading or #lines
     walk(graph.tree, '  ')
   end
-  return lines, targets, folds
+  return lines, targets, folds, first_heading
 end
 
 return M

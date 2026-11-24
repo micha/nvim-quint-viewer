@@ -5,9 +5,10 @@ repository is a standalone Neovim plugin; DML is not a build or test dependency.
 
 ## Boundaries
 
-- `plugin/quint_viewer.lua` registers `:QuintView`. Only an explicit source view
-  can invoke the exporter or use a language server. Validate the export format
-  before rendering and check source fingerprints before using mapped locations.
+- `plugin/quint_viewer.lua` registers `:QuintView`. Only an explicit view command
+  or graph key can invoke the exporter or use a language server. Validate the
+  export format before rendering and check source fingerprints before using
+  mapped locations.
 - The source graph is a separate read-only buffer. Visualize explicit Quint
   structure, show other expressions as source, and leave editing and navigation
   history to Neovim. Use the attached Quint LSP for definitions, hover, and

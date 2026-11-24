@@ -120,7 +120,7 @@ local actions = {
     vim.fn.bufload(buf)
     api.nvim_buf_set_lines(buf, 0, 0, false, policy_prefix)
   end,
-  followDefinition = function() press('gd') end,
+  followDefinition = function() press('gD') end,
   back = function() press('<C-o>') end,
   returnToCaller = function()
     -- Switch to the still-loaded caller without re-reading or changing it.

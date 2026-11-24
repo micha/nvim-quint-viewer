@@ -98,7 +98,11 @@ local function warn_stale()
   vim.notify('Quint graph is stale; save or reload the affected files and run :QuintView again.', vim.log.levels.WARN)
 end
 
-local function show_definition(result, client, target, can_jump)
+local function no_definition()
+  vim.notify('No Quint definition found.', vim.log.levels.INFO)
+end
+
+local function definition_result(result)
   if vim.islist(result) then
     if #result > 1 then
       vim.notify('Quint definition lookup returned multiple locations.', vim.log.levels.WARN)
@@ -106,47 +110,65 @@ local function show_definition(result, client, target, can_jump)
     end
     result = result[1]
   end
-  if target and type(result) == 'table' then
-    local function warn_stale_definition()
-      vim.notify('Quint language server definition is stale; restart the Quint LSP and try again.', vim.log.levels.WARN)
-    end
-    local uri = result.uri or result.targetUri
-    -- Quint's LocationLink targetRange comes from its parsed definition ID.
-    -- Its targetSelectionRange applies another offset that can overshoot the name.
-    local range = result.range or result.targetRange
-    local start = type(range) == 'table' and range.start
-    local path = type(uri) == 'string' and vim.startswith(uri, 'file:') and vim.uri_to_fname(uri)
-    local resolved = path and vim.uv.fs_realpath(path)
-    -- Quint can retain the old import positions even after the graph is rebuilt.
-    if not resolved or resolved ~= vim.uv.fs_realpath(target.path)
-      or type(start) ~= 'table' or start.line ~= target.line - 1
-      or type(start.character) ~= 'number' or start.character < 0 or start.character % 1 ~= 0 then
-      warn_stale_definition()
-      return
-    end
-    -- Load and jump through the same path we verified, not a server-supplied alias.
-    result = {uri = vim.uri_from_fname(target.path), range = range}
-    local buf = vim.uri_to_bufnr(result.uri)
-    vim.fn.bufload(buf)
-    if not can_jump() then return end
-    if not api.nvim_buf_is_loaded(buf) then warn_stale(); return end
-    local line = api.nvim_buf_get_lines(buf, start.line, start.line + 1, false)[1]
-    if not line or target.column >= #line
-      or start.character ~= vim.str_utfindex(line, client.offset_encoding, target.column) then
-      warn_stale_definition()
-      return
-    end
+  if type(result) ~= 'table' then no_definition(); return end
+  return result
+end
+
+local function verified_definition(result, client, target, can_jump, backing_buf)
+  local function warn_stale_definition()
+    vim.notify('Quint language server definition is stale; restart the Quint LSP and try again.', vim.log.levels.WARN)
   end
-  if type(result) ~= 'table' or not lsp_util.show_document(result, client.offset_encoding, {reuse_win = false}) then
-    vim.notify('No Quint definition found.', vim.log.levels.INFO)
+  local uri = result.uri or result.targetUri
+  -- Quint's LocationLink targetRange comes from its parsed definition ID.
+  -- Its targetSelectionRange applies another offset that can overshoot the name.
+  local range = result.range or result.targetRange
+  local start = type(range) == 'table' and range.start
+  local path = type(uri) == 'string' and vim.startswith(uri, 'file:') and vim.uri_to_fname(uri)
+  local resolved = path and vim.uv.fs_realpath(path)
+  if not resolved or resolved ~= vim.uv.fs_realpath(target.path)
+    or type(start) ~= 'table' or start.line ~= target.line - 1
+    or type(start.character) ~= 'number' or start.character < 0 or start.character % 1 ~= 0 then
+    warn_stale_definition()
+    return
+  end
+  -- Load through the path we verified, not a server-supplied alias.
+  local buf = backing_buf or vim.uri_to_bufnr(vim.uri_from_fname(target.path))
+  vim.fn.bufload(buf)
+  if not can_jump() then return end
+  if not api.nvim_buf_is_loaded(buf) or vim.uv.fs_realpath(api.nvim_buf_get_name(buf)) ~= resolved then
+    warn_stale()
+    return
+  end
+  local line = api.nvim_buf_get_lines(buf, start.line, start.line + 1, false)[1]
+  if not line or target.column >= #line
+    or start.character ~= vim.str_utfindex(line, client.offset_encoding, target.column) then
+    warn_stale_definition()
+    return
+  end
+  return {uri = vim.uri_from_bufnr(buf), range = range}, buf
+end
+
+local function show_source_definition(result, client, target, can_jump)
+  result = definition_result(result)
+  if not result then return end
+  if target then result = verified_definition(result, client, target, can_jump) end
+  if result and not lsp_util.show_document(result, client.offset_encoding, {reuse_win = false}) then
+    no_definition()
   end
 end
 
-local function export(path, names, cursor)
+local function byte_offset(row, column)
+  -- line2byte includes the fileformat's line endings but not the BOM.
+  return vim.fn.line2byte(row) - 1 + column + (vim.bo.bomb and 3 or 0)
+end
+
+local function export(path, names, cursor, declaration_only)
   local tool = api.nvim_get_runtime_file('tools/export_model.py', false)[1]
   assert(tool, 'could not find the installed model exporter')
   local output = vim.fn.tempname()
-  local argv = {'python3', '-B', tool, '-o', output, '--cursor', tostring(cursor), '--', path}
+  local argv = {'python3', '-B', tool, '-o', output, '--cursor', tostring(cursor)}
+  if declaration_only then argv[#argv + 1] = '--declaration' end
+  vim.list_extend(argv, {'--', path})
   vim.list_extend(argv, names)
   local result = vim.system(argv, { text = true }):wait()
   local bytes = result.code == 0 and read_file(output)
@@ -156,9 +178,11 @@ local function export(path, names, cursor)
   return graph_view.decode(bytes)
 end
 
-local function show(source, path, model)
-  local lines, targets, folds = graph_view.rows(model,
-    'gd definition   K hover   grr references   <C-o> return   za toggle branch')
+local function show(source, path, model, commit_jump)
+  local lines, targets, folds, heading = graph_view.rows(model,
+    'gd graph definition   gD source definition   K hover   grr references'
+    .. '   <C-o>/<C-i> back/forward   za toggle branch')
+  assert(heading, 'projection has no definitions')
   local source_file = vim.fs.normalize(vim.uv.fs_realpath(path) or path, {expand_env = false})
   local source_dir = vim.fs.dirname(source_file)
   local function resolve(relative)
@@ -173,7 +197,8 @@ local function show(source, path, model)
       local target = ref.definition_target
       if target then
         target.path = resolve(target.path)
-        assert(target.path == source_file or imports[target.path], 'projection is missing a definition fingerprint')
+        assert(target.path == source_file or (target.requires_imports and imports[target.path]),
+          'projection is missing a definition fingerprint')
       end
     end
   end
@@ -190,14 +215,38 @@ local function show(source, path, model)
     end
   end
 
-  local function check_fresh(target)
-    if fresh(source, path, model.source.sha256) and (not target or fresh_imports(imports)) then return true end
+  local function check_fresh(external)
+    if fresh(source, path, model.source.sha256) and (not external or fresh_imports(imports)) then return true end
     warn_stale()
     return false
   end
 
+  local function show_graph_definition(result, client, target, can_jump)
+    result = definition_result(result)
+    if not result then return end
+    local _, dest = verified_definition(result, client, target, can_jump, target.path == source_file and source or nil)
+    if not dest then return end
+    local dest_path = api.nvim_buf_get_name(dest)
+    local ok, projection = pcall(function()
+      local offset = api.nvim_buf_call(dest, function() return byte_offset(target.line, target.column) end)
+      return export(dest_path, {}, offset, true)
+    end)
+    if not can_jump() then return end
+    if not ok then
+      vim.notify('Could not build a Quint graph for this definition; use gD to jump to source.\n' .. tostring(projection),
+        vim.log.levels.WARN)
+      return
+    end
+    show(dest, dest_path, projection, function()
+      if not can_jump() then return false end
+      if fresh(dest, dest_path, projection.source.sha256) then return true end
+      warn_stale()
+      return false
+    end)
+  end
+
   local request_number = 0
-  local function lookup(kind, display)
+  local function lookup(kind, display, graph_only)
     local method = 'textDocument/' .. kind
     request_number = request_number + 1
     local request = request_number
@@ -215,7 +264,12 @@ local function show(source, path, model)
         break
       end
     end
-    if not position or not check_fresh(target) then return end
+    local external = target and target.requires_imports and target or nil
+    if not position or not check_fresh(external) then return end
+    if graph_only and not (target and target.renderable) then
+      vim.notify('No Quint graph for this definition; use gD to jump to source.', vim.log.levels.WARN)
+      return
+    end
 
     local clients = vim.lsp.get_clients({ bufnr = source, method = method })
     if #clients ~= 1 then
@@ -238,7 +292,7 @@ local function show(source, path, model)
     }
     if kind == 'references' then params.context = {includeDeclaration = true} end
     local function can_jump()
-      return still_at_origin() and check_fresh(target)
+      return still_at_origin() and check_fresh(external)
     end
     local sent = client:request(method, params, function(err, result)
       if not can_jump() then return end
@@ -246,20 +300,26 @@ local function show(source, path, model)
         vim.notify(('Quint %s lookup failed: %s'):format(kind, err.message), vim.log.levels.WARN)
         return
       end
-      display(result, client, target, can_jump)
+      display(result, client, graph_only and target or external, can_jump)
     end, source)
     if not sent then vim.notify(('Could not send Quint %s lookup.'):format(kind), vim.log.levels.WARN) end
   end
 
-  local function map(key, kind, display, desc)
-    vim.keymap.set('n', key, function() lookup(kind, display) end, { buffer = graph, silent = true, desc = desc })
+  local function map(key, kind, display, desc, graph_only)
+    vim.keymap.set('n', key, function() lookup(kind, display, graph_only) end,
+      { buffer = graph, silent = true, desc = desc })
   end
-  map('gd', 'definition', show_definition, 'Go to Quint definition')
+  map('gd', 'definition', show_graph_definition, 'View Quint definition as a graph', true)
+  map('gD', 'definition', show_source_definition, 'Go to Quint definition in source')
   map('K', 'hover', show_hover, 'Show Quint hover information')
   map('grr', 'references', show_references, 'Find Quint references')
+  vim.b[graph].quint_branch_folds = folds
+  if commit_jump then
+    if not commit_jump() then api.nvim_buf_delete(graph, {force = true}); return end
+    vim.cmd("normal! m'") -- Record the exact origin in the native jumplist.
+  end
   -- Keep the saved document (and its LSP attachment) loaded even with 'nohidden'.
   api.nvim_cmd({cmd = 'buffer', args = {tostring(graph)}, mods = {hide = true}}, {})
-  vim.b[graph].quint_branch_folds = folds
   local options = vim.wo[0][0]
   options.foldexpr = "get(get(b:, 'quint_branch_folds', []), v:lnum - 1, 0)"
   options.foldtext = "getline(v:foldstart) .. ' …'"
@@ -267,6 +327,7 @@ local function show(source, path, model)
   options.foldminlines = 1
   options.foldenable = true
   options.foldlevel = 99
+  if commit_jump then api.nvim_win_set_cursor(0, {heading, 0}) end
 end
 
 function M.open(names)
@@ -277,9 +338,7 @@ function M.open(names)
     local bytes = read_file(path)
     assert(bytes and matches_buffer(source, bytes), 'save or reload the Quint source first')
     local row, column = unpack(api.nvim_win_get_cursor(win))
-    -- line2byte includes the fileformat's line endings but not the BOM.
-    local offset = vim.fn.line2byte(row) - 1 + column + (vim.bo[source].bomb and 3 or 0)
-    local model = export(path, names, offset)
+    local model = export(path, names, byte_offset(row, column))
     assert(model.source.sha256 == vim.fn.sha256(bytes) and fresh(source, path, model.source.sha256),
       'the Quint source changed while building the graph; run :QuintView again')
     if api.nvim_get_current_win() == win and api.nvim_get_current_buf() == source then

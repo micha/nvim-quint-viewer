@@ -1,7 +1,8 @@
 # Viewer specification roadmap
 
 The viewer has verified models for [source graph selection](graph_selection.qnt),
-[definition jumps from a read-only source graph](graph_navigation.qnt),
+[raw definition jumps from a read-only source graph](graph_navigation.qnt),
+[graph-to-graph definition navigation](graph_definition_mode.qnt),
 [native branch folding](branch_folding.qnt),
 [hover and references from the source graph](graph_lookups.qnt),
 [cross-file definition jumps](graph_import.qnt),
@@ -41,8 +42,9 @@ The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 0.62.4 distribution that Quint uses for TLC. The script runs `quint verify`
 with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
-explores 15 reachable states for selection, 27 for source graph navigation,
-103 for branch folding, 14 for graph hover and references, 61 for cross-file
+explores 15 reachable states for selection, 27 for raw source navigation,
+98 for graph-to-graph definition navigation, 103 for branch folding,
+14 for graph hover and references, 61 for cross-file
 definition navigation, 18 for hover on imported calls, 64 for references
 to imported calls, and 95 for lookup freshness across re-exports and delayed replies.
 These checks verify the models, not the plugin implementation.
@@ -80,20 +82,53 @@ negative control substitutes the real graph for the wrong definition on the
 same line; Quint must reject it through the same assertions. Java and TLC
 are needed for model verification, not for replay.
 
+## Definition navigation in graph mode
+
+On a linked call to a top-level definition, `gd` opens that definition's
+read-only graph in the same window, with the cursor on its title. `Ctrl-O`
+and `Ctrl-I` return to the exact origin and target graph buffers and cursors.
+The [fixture](../tests/fixtures/graph_definition_mode) includes local and
+imported `allowed` definitions with the same name but distinct bodies.
+A second `gd` in the imported graph asks the server at the `helper` call
+in its backing source. Native back and forward restore all three sites.
+The server's destination must agree with the scoped declaration; a wrong
+file, row or column does not trigger a raw jump. An edit to the caller or
+an affected import while a request is pending also blocks navigation.
+
+On a parameter or local binding whose definition has no standalone graph,
+`gd` stays put and suggests `gD`, without asking the server. `gD` explicitly
+visits raw source, with the same checks as the previous source jump. The
+viewer does not override a user's `gd` mapping in source buffers.
+
+TLC covers one window, one ready server, one direct import, at most one
+edit, and no competing requests or cursor movement while awaiting a reply.
+The fresh two-hop history is the only modeled multi-jump chain. TLC checks
+all 98 reachable states without a trace-length cap (depth 11, including
+the initial state). The [replay](../tests/replay_graph_definition_mode.py)
+exercises 13 histories with the upstream server. It holds real definition
+replies before delivery and substitutes a wrong-scope location in one
+history. Negative controls substitute the same-named local graph, replace
+a graph jump with a raw jump, report a different buffer on `Ctrl-I`, report
+the original caller's request for the second hop, and allow a graph jump
+from a stale reply. Quint must reject each.
+
+With the tools below, run `scripts/check.sh --worktree --with-lsp` or just
+`python3 -B tests/replay_graph_definition_mode.py --worktree`.
+
 ## Source graph navigation
 
 Open the saved approval source and run `:QuintView review`. The command
 replaces the window's view with a read-only graph; it leaves source editable.
-On `allowed` in the `IF allowed` row, `gd` asks the attached Quint language
+On `allowed` in the `IF allowed` row, `gD` asks the attached Quint language
 server for the definition and lands on its name (line 9, byte column 8,
 counting columns from zero). `Ctrl-O` restores the exact graph buffer and
 cursor, without opening a split. With default Neovim fold options, `Yes`
 stays closed and `No` stays open if the jump started with `Yes` folded.
 
 An unsaved edit or a disk edit after graph generation leaves the old graph
-readable. `gd` stays at the occurrence and emits one warning, without sending
+readable. `gD` stays at the occurrence and emits one warning, without sending
 an LSP definition request. The disk-edit history then reloads the source,
-regenerates the graph, and checks that `gd` now lands one line lower and
+regenerates the graph, and checks that `gD` now lands one line lower and
 `Ctrl-O` returns to the new graph. The model covers a single window, one
 source file and definition, and at most one edit. It assumes a ready server;
 requests in flight while files change and other LSP actions are outside the
@@ -130,7 +165,7 @@ a stale graph. Both must be rejected during testing.
 
 ## Cross-file definition navigation
 
-[The model](graph_import.qnt) exercises `gd` on two separate calls in the
+[The model](graph_import.qnt) exercises `gD` on two separate calls in the
 [import fixture](../tests/fixtures/graph_import): `remote::allowed` lands on
 its declaration name in `policy.qnt`, and bare `allowed` lands on the local
 name in `caller.qnt`. Neither opens a split, and `Ctrl-O` restores the
@@ -264,12 +299,12 @@ still returned the original declaration, hover, and references after a disk edit
 
 The exporter records the fingerprints of all files Quint read through imports,
 not just the file that declares each symbol. A change on disk or an unsaved
-edit in the wrapper makes `gd`, `K`, and `grr` on `remote::allowed` warn once
+edit in the wrapper makes `gD`, `K`, and `grr` on `remote::allowed` warn once
 without sending an LSP request; focus and the graph cursor stay put. The
 same keys still work on the local `allowed`. After a disk redirect, restarting
 the server from the caller and rebuilding the graph recovers all three lookups
 with the new declaration, hover text, and reference list. After a successful
-`gd`, `Ctrl-O` restores the original graph buffer and cursor.
+`gD`, `Ctrl-O` restores the original graph buffer and cursor.
 
 ### Delayed replies
 
@@ -279,7 +314,7 @@ it. There is one request at the original occurrence and no retry. Focus and
 the exact graph cursor stay put; no definition jump, hover, or location list
 appears. Without an edit, all three delayed lookups still work. A re-export
 edit alone does not invalidate a delayed local lookup. Successful delayed
-`gd` jumps still allow `Ctrl-O` back to the exact graph position.
+`gD` jumps still allow `Ctrl-O` back to the exact graph position.
 
 [TLC](#verify-and-generate-histories) checks all 95 reachable states in the
 combined [model](graph_import_chain.qnt) without a trace-length cap (depth 11,
