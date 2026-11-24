@@ -12,15 +12,17 @@ function M.decode(text)
   return model
 end
 
-function M.rows(model, legend)
+function M.rows(model, legend, source_review)
   local lines, targets, folds = {}, {}, {}
   local depth = 0
   local function row(text, ...)
     local refs = {}
     for i = 1, select('#', ...) do
       for _, part in ipairs(select(i, ...)) do
-        if part.symbol then
-          refs[#refs + 1] = { col = #text, end_col = #text + #part.text, symbol = part.symbol, use = part.use }
+        local position = source_review and part.position or nil
+        if part.symbol or position then
+          refs[#refs + 1] = {col = #text, end_col = #text + #part.text,
+            symbol = part.symbol, use = part.use, definition_occurrence = position}
         end
         text = text .. part.text
       end

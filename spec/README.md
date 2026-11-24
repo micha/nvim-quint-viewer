@@ -2,8 +2,9 @@
 
 The viewer has verified models for [offline Definition links](source_navigation.qnt),
 [definition jumps from a read-only source graph](graph_navigation.qnt),
-[native branch folding](branch_folding.qnt), and
-[hover and references from the source graph](graph_lookups.qnt). A thin interpreter
+[native branch folding](branch_folding.qnt),
+[hover and references from the source graph](graph_lookups.qnt), and
+[cross-file definition jumps](graph_import.qnt). A thin interpreter
 drives public commands and keys and records observations. Quint judges those
 observations against the same transition rules that produced the histories.
 
@@ -37,7 +38,8 @@ The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
 explores 19 reachable states for offline navigation, 27 for source graph
-navigation, 103 for branch folding, and 14 for graph hover and references.
+navigation, 103 for branch folding, 14 for graph hover and references,
+and 12 for cross-file definition navigation.
 These checks verify the models, not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
@@ -94,8 +96,8 @@ an LSP definition request. The disk-edit history then reloads the source,
 regenerates the graph, and checks that `gd` now lands one line lower and
 `Ctrl-O` returns to the new graph. The model covers a single window, one
 source file and definition, and at most one edit. It assumes a ready server;
-requests in flight while files change, imported definitions, and other LSP
-actions are outside the slice.
+requests in flight while files change and other LSP actions are outside the
+slice. [Imported definitions](#cross-file-definition-navigation) have their own model.
 
 ### Replay the source graph
 
@@ -125,6 +127,26 @@ requests sent to complete. [The Python driver](../tests/replay_graph_navigation.
 feeds the observations back to Quint. Two negative controls keep the other
 observations fixed: report a wrong return cursor, or report one request from
 a stale graph. Both must be rejected during testing.
+
+## Cross-file definition navigation
+
+[The model](graph_import.qnt) exercises `gd` on two separate calls in the
+[import fixture](../tests/fixtures/graph_import): `remote::allowed` lands on
+the definition line in `policy.qnt`, and bare `allowed` lands on the local
+definition in `caller.qnt`. Neither opens a split, and `Ctrl-O` restores the
+original graph buffer and exact cursor in the same window. A dirty caller
+leaves the graph readable but warns once without sending a definition request.
+
+TLC checks all 12 reachable states without a trace-length bound. The replay
+starts with the imported file unopened and delegates the imported destination
+column to the server. It checks exact fixture file paths, not basenames.
+Changes to imported files, concurrent requests, and transitive imports are
+outside this slice. The controls substitute the actual same-named local
+landing and, separately, change only the destination file; Quint must reject
+both through the normal replay assertions.
+
+With the tools above, run `scripts/check.sh --worktree --with-lsp` or just
+`python3 -B tests/replay_graph_import.py --worktree`.
 
 ## Graph hover and references
 

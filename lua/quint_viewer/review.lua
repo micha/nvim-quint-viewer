@@ -85,7 +85,7 @@ end
 
 local function show(source, path, model)
   local lines, targets, folds = graph_view.rows(model,
-    'gd definition   K hover   grr references   <C-o> return   za toggle branch')
+    'gd definition   K hover   grr references   <C-o> return   za toggle branch', true)
   local graph = api.nvim_create_buf(false, true)
   vim.bo[graph].bufhidden = 'hide' -- native jump history must be able to return to this buffer
   api.nvim_buf_set_lines(graph, 0, -1, false, lines)
@@ -95,7 +95,7 @@ local function show(source, path, model)
     for _, ref in ipairs(refs) do
       local use = ref.use and model.uses[ref.use]
       ref.position = use and use.position
-      if ref.position then
+      if ref.position or ref.definition_occurrence then
         api.nvim_buf_set_extmark(graph, marks, row - 1, ref.col,
           {end_col = ref.end_col, hl_group = 'Underlined'})
       end
@@ -118,7 +118,7 @@ local function show(source, path, model)
     local position
     for _, ref in ipairs(targets[cursor[1]] or {}) do
       if ref.col <= cursor[2] and cursor[2] < ref.end_col then
-        position = ref.position
+        position = ref.position or (kind == 'definition' and ref.definition_occurrence)
         break
       end
     end

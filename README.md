@@ -54,9 +54,10 @@ the real `.qnt` buffer is unchanged and still editable.
 - `grr` opens a location list of source references, including the declaration.
   Press Enter on an entry to visit it, or use `:lclose` to close the list.
 
-If source changes, the old graph stays readable but refuses new lookups. Save
-or reload the source, then run `:QuintView review` again from it. A location list
-already returned by the server is not refreshed when source changes.
+If the file you built the graph from changes, the old graph stays readable
+but refuses new lookups. Save or reload that file, then run `:QuintView review`
+again. The viewer does not track changes to imported files or refresh
+location lists already returned by the server.
 
 Explicit `if`/`else` branches start expanded. On a `Yes` or `No` heading,
 press `za` to toggle that branch, `zc` to close it, or `zo` to open it. A closed
@@ -66,9 +67,10 @@ like `foldlevelstart` still apply on later buffer entry. Other expressions
 are shown as source.
 
 `:QuintView` selects the module named after the file. `gd`, `K`, and `grr`
-work on underlined, indexed references in that module when a single attached
-LSP client supports the requested operation. Import navigation is not yet
-supported by the graph. This route does not use DML presentation rules.
+work on indexed references in that module when a single attached LSP client
+supports the requested operation. `gd` also follows imported definitions into
+their source files; imported links do not yet support `K` or `grr`. This view
+does not use DML presentation rules.
 
 ## Try an offline export
 

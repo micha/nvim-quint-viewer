@@ -142,7 +142,7 @@ def main():
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--profile', choices=['dml-refs'], help='enable domain-specific outcome formatting')
     mode.add_argument('--source-review', action='store_true',
-                      help='export exact positions of ordinary symbol uses for source navigation')
+                      help='export exact positions of resolved references for source navigation')
     args = parser.parse_args()
     if not args.output.name.endswith('.qmodel.json'):
         parser.error('output filename must end in .qmodel.json')
@@ -152,14 +152,14 @@ def main():
         raw = source.read_bytes()
         text = raw.decode('utf-8')
         definitions, offsets, checked = load_ir(args.quint, source, module)
-        index = Index(definitions, offsets, text, checked, state_fields=not args.source_review)
+        index = Index(definitions, offsets, text, checked, source_review=args.source_review)
         exporter = Exporter(definitions, index, args.profile)
         output = args.output.resolve()
         artifact = {
             'format': 'quint-decision-model', 'version': 1, 'module': module,
             'source': {'path': relpath(source, output.parent), 'sha256': sha256(raw).hexdigest()},
             'graphs': [exporter.graph(name) for name in args.definitions],
-            **index.payload(positions=args.source_review),
+            **index.payload(),
         }
         output.write_text(json.dumps(artifact, ensure_ascii=False, sort_keys=True) + '\n', encoding='utf-8')
     except (OSError, ValueError, KeyError, subprocess.SubprocessError) as error:

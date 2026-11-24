@@ -38,3 +38,18 @@ if __name__ == '__main__':
     [guard] = uses_at(original, text, '/* é😀 */ allowed', 'allowed')
     assert (guard['name'], guard['kind']) == ('allowed', 'local value'), guard
     print('Source-review positions and record neutrality passed.')
+
+    source = ROOT / 'tests/fixtures/graph_import/caller.qnt'
+    for label, flags in [('offline', []), ('review', ['--source-review'])]:
+        output = work / f'import-{label}.qmodel.json'
+        subprocess.run([sys.executable, '-B', str(ROOT / 'tools/export_model.py'), *flags,
+                        str(source), 'review', '-o', str(output)], check=True, timeout=60)
+        model = json.loads(output.read_text(encoding='utf-8'))
+        guard = model['graphs'][0]['tree']['guard']
+        assert ''.join(part['text'] for part in guard) == 'remote::allowed(ok)', guard
+        links = [part for part in guard if 'position' in part]
+        expected = [{'text': 'remote::allowed', 'position': {'line': 6, 'column': 8}}] if flags else []
+        assert links == expected, links
+        # Both modes keep their inspector index self-contained.
+        assert all(use['target'] in model['symbols'] for use in model['uses'].values())
+    print('Imported occurrences are definition links in source review only.')

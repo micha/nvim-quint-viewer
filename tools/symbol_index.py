@@ -24,7 +24,7 @@ def type_text(node):
 
 
 class Index:
-    def __init__(self, defs, offsets, source, checked, *, state_fields=True):
+    def __init__(self, defs, offsets, source, checked, *, source_review=False):
         self.source = source
         self.offsets = offsets
         self.table = checked['table']
@@ -32,7 +32,8 @@ class Index:
         self.symbols = {}
         self.uses = {}
         self.tokens = {}
-        state = defs.get('State', {}).get('type', {}) if state_fields else {}
+        self.line_starts = ([0] + [match.end() for match in re.finditer('\n', source)]) if source_review else None
+        state = {} if source_review else defs.get('State', {}).get('type', {})
         fields = state.get('fields', {}).get('fields', []) if state.get('kind') == 'rec' else []
         self.fields = {f['fieldName']: f['fieldType'] for f in fields}
         for name, field_type in self.fields.items():
@@ -142,12 +143,19 @@ class Index:
             if offset < cursor or offset not in self.tokens:
                 continue
             stop, label, target, use = self.tokens[offset]
-            if stop > end or target not in self.symbols:
+            if stop > end:
+                continue
+            if target in self.symbols:
+                fragment = {'text': label, 'symbol': target}
+                if use is not None:
+                    fragment['use'] = use
+            elif self.line_starts is not None and use is not None:
+                # The target is outside the symbol index. In source review, the
+                # LSP only needs the resolved reference's position in the caller.
+                fragment = {'text': label, 'position': self.position(offset)}
+            else:
                 continue
             yield {'text': self.source[cursor:offset]}
-            fragment = {'text': label, 'symbol': target}
-            if use is not None:
-                fragment['use'] = use
             yield fragment
             cursor = stop
         yield {'text': self.source[cursor:end]}
@@ -157,13 +165,15 @@ class Index:
         target = self.uses.get(key, {}).get('target')
         return {'text': node['value'], 'symbol': target, 'use': key} if target else {'text': node['value']}
 
-    def payload(self, positions=False):
+    def position(self, start):
+        line = bisect_right(self.line_starts, start)
+        column = len(self.source[self.line_starts[line - 1]:start].encode('utf-8'))
+        return dict(line=line, column=column)
+
+    def payload(self):
         uses = {key: use for key, use in self.uses.items() if use['target'] in self.symbols}
-        if positions:
-            line_starts = [0] + [match.end() for match in re.finditer('\n', self.source)]
+        if self.line_starts is not None:
             for start, (_, _, _, key) in self.tokens.items():
                 if key in uses:
-                    line = bisect_right(line_starts, start)
-                    column = len(self.source[line_starts[line - 1]:start].encode('utf-8'))
-                    uses[key] = {**uses[key], 'position': dict(line=line, column=column)}
+                    uses[key] = {**uses[key], 'position': self.position(start)}
         return dict(symbols=self.symbols, uses=uses)
