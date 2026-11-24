@@ -1,0 +1,3 @@
+/build/
+*.qmodel.json
+__pycache__/
