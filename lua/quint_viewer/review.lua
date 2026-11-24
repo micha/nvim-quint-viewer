@@ -93,8 +93,13 @@ local function show_definition(result, client, target, can_jump)
     result = result[1]
   end
   if target and type(result) == 'table' then
+    local function warn_stale_definition()
+      vim.notify('Quint language server definition is stale; restart the Quint LSP and try again.', vim.log.levels.WARN)
+    end
     local uri = result.uri or result.targetUri
-    local range = result.range or result.targetSelectionRange
+    -- Quint's LocationLink targetRange comes from its parsed definition ID.
+    -- Its targetSelectionRange applies another offset that can overshoot the name.
+    local range = result.range or result.targetRange
     local start = type(range) == 'table' and range.start
     local path = type(uri) == 'string' and vim.startswith(uri, 'file:') and vim.uri_to_fname(uri)
     local resolved = path and vim.uv.fs_realpath(path)
@@ -102,7 +107,7 @@ local function show_definition(result, client, target, can_jump)
     if not resolved or resolved ~= vim.uv.fs_realpath(target.path)
       or type(start) ~= 'table' or start.line ~= target.line - 1
       or type(start.character) ~= 'number' or start.character < 0 or start.character % 1 ~= 0 then
-      vim.notify('Quint language server definition is stale; restart the Quint LSP and try again.', vim.log.levels.WARN)
+      warn_stale_definition()
       return
     end
     -- Load and jump through the same path we verified, not a server-supplied alias.
@@ -111,6 +116,12 @@ local function show_definition(result, client, target, can_jump)
     vim.fn.bufload(buf)
     if not can_jump() then return end
     if not api.nvim_buf_is_loaded(buf) then warn_stale(); return end
+    local line = api.nvim_buf_get_lines(buf, start.line, start.line + 1, false)[1]
+    if not line or target.column >= #line
+      or start.character ~= vim.str_utfindex(line, client.offset_encoding, target.column) then
+      warn_stale_definition()
+      return
+    end
   end
   if type(result) ~= 'table' or not lsp_util.show_document(result, client.offset_encoding, {reuse_win = false}) then
     vim.notify('No Quint definition found.', vim.log.levels.INFO)

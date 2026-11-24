@@ -2,13 +2,14 @@
 module graph_import {
   type Request = { op: str, arg: str }
   type Notice = { level: str, reason: str }
+  type Position = { file: str, line: int, column: int }
   type View = {
     windows: int, focus: str, modifiable: bool, line: int, column: int,
     atOrigin: bool, definitionRequests: int, notices: List[Notice]
   }
   type Session = {
     request: Request, phase: str, selected: str, callerEdited: bool,
-    policyEdit: str, graphUsesMovedPolicy: bool, serverUsesMovedPolicy: bool, view: View,
+    policyEdit: str, graphPolicyVersion: str, serverPolicyVersion: str, view: View,
   }
   var session: Session
 
@@ -18,18 +19,27 @@ module graph_import {
   pure val selectLocal = { op: "positionOnCall", arg: "allowed" }
   pure val editRequest = { op: "editCaller", arg: "" }
   pure val editPolicyDiskRequest = { op: "editPolicyDisk", arg: "" }
+  pure val shiftPolicyColumnRequest = { op: "shiftPolicyColumn", arg: "" }
   pure val editPolicyBufferRequest = { op: "editPolicyBuffer", arg: "" }
   pure val followRequest = { op: "followDefinition", arg: "" }
   pure val backRequest = { op: "back", arg: "" }
   pure val returnToCallerRequest = { op: "returnToCaller", arg: "" }
   pure val reanalyzeCallerRequest = { op: "reanalyzeCaller", arg: "" }
   pure val calls = Set(selectImport, selectLocal)
-  pure val requests = calls.union(Set(showRequest, editRequest, editPolicyDiskRequest,
+  pure val requests = calls.union(Set(showRequest, editRequest, editPolicyDiskRequest, shiftPolicyColumnRequest,
     editPolicyBufferRequest, followRequest, backRequest, returnToCallerRequest, reanalyzeCallerRequest))
 
-  // Source focus denotes the exact fixture path, never just its basename.
-  pure def sourceView(file: str, line: int, column: int): View = {
-    windows: 1, focus: file, modifiable: true, line: line, column: column,
+  // Source positions use one-based lines and zero-based byte columns.
+  // File identities denote exact fixture paths, not just matching basenames.
+  pure def policyVersion(edit: str): str = if (Set("line", "column").contains(edit)) edit else "original"
+  // The same-line shift inserts a declaration with a multibyte character
+  // before allowed; the server's UTF-16 column 33 is byte column 34.
+  pure def policyDeclaration(version: str): Position = {
+    file: "policy.qnt", line: if (version == "line") 4 else 2, column: if (version == "column") 34 else 11,
+  }
+  pure val localDeclaration = { file: "caller.qnt", line: 3, column: 11 }
+  pure def sourceView(position: Position): View = {
+    windows: 1, focus: position.file, modifiable: true, line: position.line, column: position.column,
     atOrigin: false, definitionRequests: 0, notices: List(),
   }
   // Graph coordinates are presentation details; atOrigin requires the original
@@ -38,26 +48,22 @@ module graph_import {
     windows: 1, focus: "graph", modifiable: false, line: 0, column: 0,
     atOrigin: atOrigin, definitionRequests: 0, notices: List(),
   }
-  pure def definitionView(selected: str, moved: bool): View = {
-    ...(if (selected == selectImport.arg) sourceView("policy.qnt", if (moved) 4 else 2, 0)
-      else sourceView("caller.qnt", 3, 11)),
-    definitionRequests: 1,
-  }
+  pure def definitionView(position: Position): View = { ...sourceView(position), definitionRequests: 1 }
   pure val rejectedView = { ...graphView(true), notices: List({ level: "warn", reason: "staleGraph" }) }
   pure val rejectedReplyView = {
     ...graphView(true), definitionRequests: 1, notices: List({ level: "warn", reason: "staleDefinition" }),
   }
-  pure val callerView = sourceView("caller.qnt", 1, 0)
+  pure val callerView = sourceView({ file: "caller.qnt", line: 1, column: 0 })
+  val diskVersion = policyVersion(session.policyEdit)
 
   action init = session' = {
     request: initRequest, phase: "source", selected: "", callerEdited: false,
-    policyEdit: "none", graphUsesMovedPolicy: false, serverUsesMovedPolicy: false, view: callerView,
+    policyEdit: "none", graphPolicyVersion: "original", serverPolicyVersion: "original", view: callerView,
   }
   action showGraph = all {
     session.phase == "source",
     session' = {
-      ...session, request: showRequest, phase: "graph", graphUsesMovedPolicy: session.policyEdit == "disk",
-      view: graphView(false),
+      ...session, request: showRequest, phase: "graph", graphPolicyVersion: diskVersion, view: graphView(false),
     },
   }
   action positionOnCall(request: Request): bool = all {
@@ -79,29 +85,28 @@ module graph_import {
   }
   val importedCall = session.selected == selectImport.arg
   val staleGraph = session.callerEdited or (importedCall and
-    (session.policyEdit == "buffer" or (session.policyEdit == "disk" and not(session.graphUsesMovedPolicy))))
-  val staleReply = importedCall and (session.graphUsesMovedPolicy != session.serverUsesMovedPolicy)
+    (session.policyEdit == "buffer" or session.graphPolicyVersion != diskVersion))
+  val graphDeclaration = policyDeclaration(session.graphPolicyVersion)
+  val definitionReply = if (importedCall) policyDeclaration(session.serverPolicyVersion) else localDeclaration
   action followDefinition = all {
     session.phase == "call",
     session' = if (staleGraph) {
       ...session, request: followRequest, phase: "rejected", view: rejectedView,
-    } else if (staleReply) {
+    } else if (importedCall and definitionReply != graphDeclaration) {
       ...session, request: followRequest, phase: "rejected", view: rejectedReplyView,
     } else {
-      ...session, request: followRequest, phase: "definition",
-      view: definitionView(session.selected, session.policyEdit == "disk"),
+      ...session, request: followRequest, phase: "definition", view: definitionView(definitionReply),
     },
   }
   action returnToCaller = all {
     session.phase == "rejected",
-    session.policyEdit == "disk",
+    diskVersion != "original",
     session' = { ...session, request: returnToCallerRequest, phase: "source", view: callerView },
   }
   action reanalyzeCaller = all {
     session.phase == "source",
-    session.policyEdit == "disk",
-    not(session.serverUsesMovedPolicy),
-    session' = { ...session, request: reanalyzeCallerRequest, serverUsesMovedPolicy: true, view: callerView },
+    session.serverPolicyVersion != diskVersion,
+    session' = { ...session, request: reanalyzeCallerRequest, serverPolicyVersion: diskVersion, view: callerView },
   }
   action back = all {
     session.phase == "definition",
@@ -112,7 +117,8 @@ module graph_import {
     all { request == showRequest, showGraph },
     all { calls.contains(request), positionOnCall(request) },
     all { request == editRequest, editCaller },
-    all { request == editPolicyDiskRequest, editPolicy(request, "disk") },
+    all { request == editPolicyDiskRequest, editPolicy(request, "line") },
+    all { request == shiftPolicyColumnRequest, editPolicy(request, "column") },
     all { request == editPolicyBufferRequest, editPolicy(request, "buffer") },
     all { request == followRequest, followDefinition },
     all { request == backRequest, back },
@@ -124,23 +130,15 @@ module graph_import {
     all { Set("returned", "rejected").contains(session.phase), session' = session },
   }
 
-  // For an unopened imported file the upstream server owns placement within
-  // the declaration line. Its selected column is not part of this contract.
-  def observationMatches(observed: View): bool =
-    if (session.phase == "definition" and session.selected == selectImport.arg)
-      session.view == { ...observed, column: 0 }
-    else session.view == observed
+  def observationMatches(observed: View): bool = session.view == observed
   val singleWindow = session.view.windows == 1
   val graphIsReadOnly = (session.view.focus == "graph") == not(session.view.modifiable)
-  val freshFollowResolvesScope = (session.request == followRequest and not(staleGraph) and not(staleReply)) implies all {
-    session.view.definitionRequests == 1,
-    importedCall implies (session.view.focus == "policy.qnt" and session.view.line ==
-      (if (session.policyEdit == "disk") 4 else 2)),
-    not(importedCall) implies (session.view.focus == "caller.qnt" and session.view.line == 3 and session.view.column == 11),
-  }
+  val serverAndGraphDisagree = importedCall and session.graphPolicyVersion != session.serverPolicyVersion
+  val freshFollowResolvesScope = (session.request == followRequest and not(staleGraph) and not(serverAndGraphDisagree)) implies
+    session.view == definitionView(if (importedCall) policyDeclaration(diskVersion) else localDeclaration)
   val staleGraphWarnsWithoutRequest = (session.request == followRequest and staleGraph) implies
     session.view == rejectedView
-  val staleServerReplyDoesNotJump = (session.request == followRequest and not(staleGraph) and staleReply) implies
+  val staleServerReplyDoesNotJump = (session.request == followRequest and not(staleGraph) and serverAndGraphDisagree) implies
     session.view == rejectedReplyView
   val backRestoresOrigin = (session.request == backRequest) implies session.view == graphView(true)
 
@@ -148,7 +146,7 @@ module graph_import {
     .then(perform(showRequest))
     .then(perform(selectImport))
     .then(perform(followRequest))
-    .expect(freshFollowResolvesScope and session.view.focus == "policy.qnt" and session.view.line == 2)
+    .expect(freshFollowResolvesScope and session.view == definitionView({ file: "policy.qnt", line: 2, column: 11 }))
     .then(perform(backRequest))
     .expect(backRestoresOrigin)
 
@@ -206,7 +204,28 @@ module graph_import {
     .then(perform(showRequest))
     .then(perform(selectImport))
     .then(perform(followRequest))
-    .expect(freshFollowResolvesScope and session.view.focus == "policy.qnt" and session.view.line == 4)
+    .expect(freshFollowResolvesScope and session.view == definitionView({ file: "policy.qnt", line: 4, column: 11 }))
+    .then(perform(backRequest))
+    .expect(backRestoresOrigin)
+
+  run shiftedPolicyRefreshTest = init
+    .then(perform(showRequest))
+    .then(perform(selectImport))
+    .then(perform(shiftPolicyColumnRequest))
+    .then(perform(followRequest))
+    .expect(session.view == rejectedView)
+    .then(perform(returnToCallerRequest))
+    .then(perform(showRequest))
+    .then(perform(selectImport))
+    .then(perform(followRequest))
+    .expect(definitionReply.file == graphDeclaration.file and definitionReply.line == graphDeclaration.line and
+      definitionReply.column != graphDeclaration.column and session.view == rejectedReplyView)
+    .then(perform(returnToCallerRequest))
+    .then(perform(reanalyzeCallerRequest))
+    .then(perform(showRequest))
+    .then(perform(selectImport))
+    .then(perform(followRequest))
+    .expect(freshFollowResolvesScope and session.view == definitionView({ file: "policy.qnt", line: 2, column: 34 }))
     .then(perform(backRequest))
     .expect(backRestoresOrigin)
 }

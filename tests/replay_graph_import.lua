@@ -72,6 +72,16 @@ end
 
 local policy_prefix = {'// Move the imported declaration down.', '// Leave the caller unchanged.'}
 
+local function rewrite_policy(rewrite)
+  local input = assert(io.open(policy, 'rb'))
+  local bytes = assert(input:read('*a'))
+  assert(input:close())
+  local edited = rewrite(bytes)
+  local output = assert(io.open(policy, 'wb'))
+  assert(output:write(edited))
+  assert(output:close())
+end
+
 local actions = {
   init = start,
   showGraph = function(operator)
@@ -95,12 +105,15 @@ local actions = {
     api.nvim_buf_set_lines(source_buf, 0, 0, false, {'// Unsaved edit during replay.'})
   end,
   editPolicyDisk = function()
-    local input = assert(io.open(policy, 'rb'))
-    local bytes = assert(input:read('*a'))
-    assert(input:close())
-    local output = assert(io.open(policy, 'wb'))
-    assert(output:write(table.concat(policy_prefix, '\n'), '\n', bytes))
-    assert(output:close())
+    rewrite_policy(function(bytes) return table.concat(policy_prefix, '\n') .. '\n' .. bytes end)
+  end,
+  shiftPolicyColumn = function()
+    rewrite_policy(function(bytes)
+      -- Move the declaration on the same line so its byte and UTF-16 columns differ.
+      local shifted, count = bytes:gsub('\n  pure def allowed', '\n  pure val accent = "é" pure def allowed', 1)
+      assert(count == 1, 'cannot find the policy declaration to shift')
+      return shifted
+    end)
   end,
   editPolicyBuffer = function()
     local buf = vim.fn.bufadd(policy)

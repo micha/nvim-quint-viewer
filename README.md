@@ -62,14 +62,15 @@ If the file you built the graph from changes, the old graph stays readable
 but refuses new lookups. For an imported symbol, the viewer also checks the
 file that defines it. An edited or unavailable file blocks lookups on that
 symbol without blocking local lookups. Save or reload any affected files, then
-rebuild the graph with `:QuintView review` from the caller. An imported reference
-list must include the declaration at its mapped line and column. This check
-can catch a moved declaration but does not guarantee every returned use is up
-to date. If the server still returns outdated results, run `:lsp restart quint`
-from the caller, wait for analysis, and try again. The viewer does not refresh
-location lists already returned by the server. Quint language server 0.21.0
-can report incorrect columns after non-BMP characters (such as emoji) on the
-declaration line; the viewer rejects imported lists with mismatched columns.
+rebuild the graph with `:QuintView review` from the caller. For imported
+symbols, `gd` only jumps if the server's destination matches the declaration's
+mapped file, line, and byte column. A `grr` list must contain that same
+location, but this does not guarantee every returned use is up to date. If
+the server still returns outdated results, run `:lsp restart quint` from the
+caller, wait for analysis, and try again. The viewer does not refresh location
+lists already returned by the server. Quint language server 0.21.0 can report
+incorrect columns after non-BMP characters (such as emoji) on the declaration
+line; the viewer rejects imported jumps and lists with mismatched columns.
 
 Explicit `if`/`else` branches start expanded. On a `Yes` or `No` heading,
 press `za` to toggle that branch, `zc` to close it, or `zo` to open it. A closed

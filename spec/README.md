@@ -41,7 +41,7 @@ The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
 explores 15 reachable states for selection, 27 for source graph navigation,
-103 for branch folding, 14 for graph hover and references, 39 for cross-file
+103 for branch folding, 14 for graph hover and references, 61 for cross-file
 definition navigation, 18 for hover on imported calls, and 64 for references
 to imported calls.
 These checks verify the models, not the plugin implementation.
@@ -131,27 +131,34 @@ a stale graph. Both must be rejected during testing.
 
 [The model](graph_import.qnt) exercises `gd` on two separate calls in the
 [import fixture](../tests/fixtures/graph_import): `remote::allowed` lands on
-the definition line in `policy.qnt`, and bare `allowed` lands on the local
-definition in `caller.qnt`. Neither opens a split, and `Ctrl-O` restores the
+its declaration name in `policy.qnt`, and bare `allowed` lands on the local
+name in `caller.qnt`. Neither opens a split, and `Ctrl-O` restores the
 original graph buffer and exact cursor in the same window. A dirty caller,
 a dirty imported buffer, or an on-disk edit to the imported definition file
 makes the affected jump warn once without sending a request. Editing the
 import does not block the local jump.
 
-On rebuild after an on-disk move, the graph knows the new declaration line,
-but the server can still reply with the old location. This reply warns and
-leaves focus on the graph. Restarting the server from the caller and rebuilding
-the graph recovers the jump to the new line and the exact `Ctrl-O` return.
+On rebuild after an on-disk move, the graph maps the new declaration position
+but the server can still reply with the old one. The imported reply must match
+the mapped file, line, and byte column. A mismatch warns once and leaves the
+graph and its cursor in place, even when only the column changed. Restarting
+the server from the caller and rebuilding the graph recovers the jump to the
+new position and the exact `Ctrl-O` return.
 
-TLC checks all 39 reachable states without a trace-length bound. The replay
-starts with the imported file unopened and checks the exact fixture file path
-and declaration line, leaving the imported destination column to the server.
-It covers one direct import and either an unsaved edit or a disk move; changes
-while requests are in flight, exact imported columns, and transitive import
-invalidation are outside this slice. The controls substitute the actual
-same-named local landing, change only the destination file, or replace only
-the moved declaration line with its old line. Quint must reject each through
-the normal replay assertions.
+TLC checks all 61 reachable states without a trace-length bound (reachable
+depth 11, including the initial state). The model covers one direct import,
+one ready server, and at most one edit: an unsaved edit, a disk move to a new
+line, or a same-line shift. It compares positions after conversion to byte
+columns; it does not model LSP encodings, changes during an in-flight request,
+or transitive import invalidation.
+
+The replay starts with the imported file unopened and checks the exact file
+path, one-based line, and zero-based byte column. The same-line shift inserts
+a declaration containing `é` before the imported name; after restart the jump
+must translate the server's UTF-16 column 33 to byte column 34. Negative controls
+substitute the same-named local landing, change only the destination file, or
+restore the old line or the old column on the matching file. Quint must reject
+each through the normal replay assertions.
 
 With the tools above, run `scripts/check.sh --worktree --with-lsp` or just
 `python3 -B tests/replay_graph_import.py --worktree`.
