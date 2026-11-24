@@ -11,7 +11,8 @@ repository is a standalone Neovim plugin; DML is not a build or test dependency.
   and check the source fingerprint before using mapped locations.
 - The source graph is a separate read-only buffer. Visualize explicit Quint
   structure, show other expressions as source, and leave editing and navigation
-  history to Neovim. Use the attached Quint LSP for definition lookup.
+  history to Neovim. Use the attached Quint LSP for definitions, hover, and
+  references.
 - `tools/export_model.py` and `tools/symbol_index.py` build the decision tree and
   symbol index using Quint’s parsed and typechecked output. Keep definition
   identities scoped; do not resolve a reference by spelling alone. DML

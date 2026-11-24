@@ -1,8 +1,9 @@
 # Viewer specification roadmap
 
 The viewer has verified models for [offline Definition links](source_navigation.qnt),
-[definition jumps from a read-only source graph](graph_navigation.qnt), and
-[native branch folding in the source graph](branch_folding.qnt). A thin interpreter
+[definition jumps from a read-only source graph](graph_navigation.qnt),
+[native branch folding](branch_folding.qnt), and
+[hover and references from the source graph](graph_lookups.qnt). A thin interpreter
 drives public commands and keys and records observations. Quint judges those
 observations against the same transition rules that produced the histories.
 
@@ -36,8 +37,8 @@ The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
 explores 19 reachable states for offline navigation, 27 for source graph
-navigation, and 103 for branch folding. These checks verify the models,
-not the plugin implementation.
+navigation, 103 for branch folding, and 14 for graph hover and references.
+These checks verify the models, not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
 local endpoint (for example, `127.0.0.1:8823`).
@@ -124,6 +125,28 @@ requests sent to complete. [The Python driver](../tests/replay_graph_navigation.
 feeds the observations back to Quint. Two negative controls keep the other
 observations fixed: report a wrong return cursor, or report one request from
 a stale graph. Both must be rejected during testing.
+
+## Graph hover and references
+
+From `IF allowed` in `:QuintView review`, `K` asks the server about the
+condition occurrence, not the declaration. It displays `val allowed: bool`
+in a native floating preview without moving focus or the graph cursor.
+`grr` asks about the same occurrence, includes the declaration, and focuses
+an ordinary location list owned by the graph window. The graph stays at the
+original cursor. Both keys do nothing on an unlinked heading. If the graph
+is stale from an unsaved edit or a change on disk, each key warns once and
+sends no request.
+
+[The model](graph_lookups.qnt) covers one lookup per history, one ready
+server, and a single source file; concurrent requests, unsupported methods,
+and navigation within a returned list are outside this slice. The replay
+observes the actual outbound LSP parameters, preview, location list, focus,
+cursor, and notices. The negative controls report a lookup at the declaration
+instead of the occurrence, a request despite a stale warning, and a missing
+reference. Quint must reject each through the same assertion path.
+
+Run `scripts/check.sh --worktree --with-lsp` with the tools above, or run just
+this replay with `python3 -B tests/replay_graph_lookups.py --worktree`.
 
 ## Native branch folding
 

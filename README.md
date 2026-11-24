@@ -26,7 +26,7 @@ install, prepend the checkout to `runtimepath`.
 
 ## View a saved Quint file
 
-Put Python 3.10+ and `quint` on `PATH`. For definition jumps, install
+Put Python 3.10+ and `quint` on `PATH`. For graph navigation and lookups, install
 [`quint-language-server`](https://www.npmjs.com/package/@informalsystems/quint-language-server)
 and configure Neovim to attach it to Quint source buffers, if it doesn't
 already. If server `0.21.0` fails with `Cannot find module 'lodash'`, install
@@ -47,9 +47,16 @@ vim.lsp.enable('quint')
 Open `examples/approval.qnt` and run `:QuintView review`. Put the cursor on
 `allowed` in `IF allowed` and press `gd` to jump to its definition. `Ctrl-O`
 returns to the graph at the original cursor position. The graph is read-only;
-the real `.qnt` buffer is unchanged and still editable. If source changes,
-the old graph stays readable but refuses new definition lookups. Save or reload
-the source, then run `:QuintView review` again from it.
+the real `.qnt` buffer is unchanged and still editable.
+
+- `K` shows the language server's type and documentation in a preview without
+  leaving the graph.
+- `grr` opens a location list of source references, including the declaration.
+  Press Enter on an entry to visit it, or use `:lclose` to close the list.
+
+If source changes, the old graph stays readable but refuses new lookups. Save
+or reload the source, then run `:QuintView review` again from it. A location list
+already returned by the server is not refreshed when source changes.
 
 Explicit `if`/`else` branches start expanded. On a `Yes` or `No` heading,
 press `za` to toggle that branch, `zc` to close it, or `zo` to open it. A closed
@@ -58,10 +65,10 @@ by Neovim; deeper branches stay inside their ancestor’s fold. Native options
 like `foldlevelstart` still apply on later buffer entry. Other expressions
 are shown as source.
 
-`:QuintView` selects the module named after the file. `gd` works on underlined,
-indexed references in that module when a single definition-capable LSP client
-is attached. Graph hover, references, and import navigation are not implemented
-yet. This route does not use DML presentation rules.
+`:QuintView` selects the module named after the file. `gd`, `K`, and `grr`
+work on underlined, indexed references in that module when a single attached
+LSP client supports the requested operation. Import navigation is not yet
+supported by the graph. This route does not use DML presentation rules.
 
 ## Try an offline export
 
@@ -106,13 +113,13 @@ python3 tools/export_model.py ../dml/tests/ref_rules.qnt editRef finishTxn \
 New features and observable behavior changes follow the
 [Quint-first workflow](AGENTS.md#quint-first-development): verify the design
 before implementing it, then replay Quint histories against headless Neovim.
-See the [specification roadmap](spec/README.md) for the navigation and folding
-models. Run `nix develop .#spec -c scripts/check-spec.sh` to verify them
-independently of the plugin.
+See the [specification roadmap](spec/README.md) for the navigation, folding,
+and LSP lookup models. Run `nix develop .#spec -c scripts/check-spec.sh` to
+verify them independently of the plugin.
 
 `nix develop -c scripts/check.sh` checks deterministic export, artifact
 selection, and navigation, then replays offline navigation and native source
 folds against a clean plugin installation from the committed `HEAD`. Pass
-`--worktree` to test uncommitted changes. To also replay graph navigation with
-the real server, add `--with-lsp` with a compatible Quint CLI and server on
-`PATH`; see [the replay instructions](spec/README.md#replay-the-source-graph).
+`--worktree` to test uncommitted changes. To also replay graph navigation and
+lookups with the real server, add `--with-lsp` with a compatible Quint CLI
+and server on `PATH`; see [the replay instructions](spec/README.md#replay-the-source-graph).
