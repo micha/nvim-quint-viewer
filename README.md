@@ -47,7 +47,8 @@ vim.lsp.enable('quint')
 Open `examples/approval.qnt` and run `:QuintView review`. Put the cursor on
 `allowed` in `IF allowed` and press `gd` to jump to its definition. `Ctrl-O`
 returns to the graph at the original cursor position. The graph is read-only;
-the real `.qnt` buffer is unchanged and still editable.
+the real `.qnt` buffer is unchanged and still editable. For imports and
+nested branches, try the [access review example](examples/access_review/).
 
 - `K` shows the language server's type and documentation in a preview without
   leaving the graph.
