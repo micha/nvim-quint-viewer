@@ -2,7 +2,6 @@
 set -eu
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
-spec="$root/spec/source_navigation.qnt"
 work=$(mktemp -d)
 trap 'rm -rf -- "$work"' EXIT
 cd "$work"
@@ -12,17 +11,33 @@ if [ -n "${QMODEL_APALACHE_CACHE:-}" ]; then
 fi
 
 printf '%s\n' '{"workers":1,"maxHeap":"-Xmx256m","stackSize":"-Xss8m"}' > "$work/tlc.json"
-quint verify "$spec" --backend=tlc --tlc-config "$work/tlc.json" \
-  --server-endpoint "${QMODEL_SPEC_ENDPOINT:-127.0.0.1:8822}" \
-  --invariants sourceOnlyAfterFreshFollow noticeOnlyAfterChangedFollow \
-  freshFollowOpensDefinition changedFollowKeepsViewer
+verify() {
+  spec=$1
+  shift
+  quint verify "$root/spec/$spec.qnt" --backend=tlc --tlc-config "$work/tlc.json" \
+    --server-endpoint "${QMODEL_SPEC_ENDPOINT:-127.0.0.1:8822}" --invariants "$@"
+}
 
-quint test "$spec" --backend=typescript --seed=1 --out-itf="$work/{test}_{seq}.itf.json"
-# A missing or renamed Quint test can otherwise be silently skipped.
-for test in freshLocalDefinitionTest freshOperatorDefinitionTest changedAfterOpenTest; do
-  set -- "$work"/"${test}"_*.itf.json
-  if [ "$#" -ne 1 ] || [ ! -s "$1" ]; then
-    printf 'Expected one ITF trace for %s\n' "$test" >&2
-    exit 1
-  fi
-done
+histories() {
+  spec=$1
+  shift
+  traces="$work/$spec"
+  mkdir "$traces"
+  quint test "$root/spec/$spec.qnt" --backend=typescript --seed=1 --out-itf="$traces/{test}_{seq}.itf.json"
+  # A missing or renamed Quint test can otherwise be silently skipped.
+  for test do
+    set -- "$traces"/"${test}"_*.itf.json
+    if [ "$#" -ne 1 ] || [ ! -s "$1" ]; then
+      printf 'Expected one ITF trace for %s\n' "$test" >&2
+      exit 1
+    fi
+  done
+}
+
+verify source_navigation sourceOnlyAfterFreshFollow noticeOnlyAfterChangedFollow \
+  freshFollowOpensDefinition changedFollowKeepsViewer
+histories source_navigation freshLocalDefinitionTest freshOperatorDefinitionTest changedAfterOpenTest
+
+verify graph_navigation singleWindow graphIsReadOnly freshFollowReachesDefinition \
+  staleFollowKeepsOrigin backRestoresOrigin
+histories graph_navigation freshDefinitionAndBackTest dirtySourceRefusesDefinitionTest diskChangeAndRegenerateTest

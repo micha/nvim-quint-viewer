@@ -2,10 +2,17 @@
 set -eu
 
 root=$(CDPATH='' cd -- "$(dirname -- "$0")/.." && pwd)
-mode=${1:-}
-if [ "$#" -gt 1 ] || { [ -n "$mode" ] && [ "$mode" != --worktree ]; }; then
-  printf 'Usage: %s [--worktree]\n' "$0" >&2
-  exit 2
+mode= with_lsp=
+for option do
+  case "$option" in
+    --worktree) mode=--worktree ;;
+    --with-lsp) with_lsp=1 ;;
+    *) printf 'Usage: %s [--worktree] [--with-lsp]\n' "$0" >&2; exit 2 ;;
+  esac
+done
+if [ -n "$with_lsp" ] && ! command -v quint-language-server >/dev/null; then
+  printf 'quint-language-server is required for --with-lsp; see spec/README.md\n' >&2
+  exit 1
 fi
 
 work=$(mktemp -d)
@@ -29,6 +36,7 @@ if export_model missing -o "$work/missing.qmodel.json" >"$work/errors" 2>&1; the
 fi
 grep -q 'no operator or value named' "$work/errors"
 test ! -e "$work/missing.qmodel.json"
+python3 -B "$root/tests/export_source_review.py" "$work"
 
 cp "$root/tests/init.lua" "$work/config/nvim/init.lua"
 run_viewer() {
@@ -42,4 +50,8 @@ QMODEL_CASE=invalid run_viewer "$work/invalid.qmodel.json"
 printf '\n// Edit after export.\n' >>"$work/source/approval.qnt"
 QMODEL_CASE=stale run_viewer "$work/approval.qmodel.json"
 printf 'Deterministic export and Neovim viewer checks passed.\n'
+# Pass either one --worktree option or no arguments to each replay.
+set --
+if [ -n "$mode" ]; then set -- "$mode"; fi
 python3 -B "$root/tests/replay_source_navigation.py" "$@"
+if [ -n "$with_lsp" ]; then python3 -B "$root/tests/replay_graph_navigation.py" "$@"; fi

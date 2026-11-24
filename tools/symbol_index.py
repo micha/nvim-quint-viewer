@@ -1,5 +1,6 @@
 """Build the symbol index for the offline decision-graph inspector."""
 
+from bisect import bisect_right
 import re
 
 
@@ -23,7 +24,7 @@ def type_text(node):
 
 
 class Index:
-    def __init__(self, defs, offsets, source, checked):
+    def __init__(self, defs, offsets, source, checked, *, state_fields=True):
         self.source = source
         self.offsets = offsets
         self.table = checked['table']
@@ -31,7 +32,7 @@ class Index:
         self.symbols = {}
         self.uses = {}
         self.tokens = {}
-        state = defs.get('State', {}).get('type', {})
+        state = defs.get('State', {}).get('type', {}) if state_fields else {}
         fields = state.get('fields', {}).get('fields', []) if state.get('kind') == 'rec' else []
         self.fields = {f['fieldName']: f['fieldType'] for f in fields}
         for name, field_type in self.fields.items():
@@ -156,6 +157,13 @@ class Index:
         target = self.uses.get(key, {}).get('target')
         return {'text': node['value'], 'symbol': target, 'use': key} if target else {'text': node['value']}
 
-    def payload(self):
+    def payload(self, positions=False):
         uses = {key: use for key, use in self.uses.items() if use['target'] in self.symbols}
+        if positions:
+            line_starts = [0] + [match.end() for match in re.finditer('\n', self.source)]
+            for start, (_, _, _, key) in self.tokens.items():
+                if key in uses:
+                    line = bisect_right(line_starts, start)
+                    column = len(self.source[line_starts[line - 1]:start].encode('utf-8'))
+                    uses[key] = {**uses[key], 'position': dict(line=line, column=column)}
         return dict(symbols=self.symbols, uses=uses)

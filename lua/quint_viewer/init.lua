@@ -1,5 +1,6 @@
 local M = {}
 local api = vim.api
+local graph_view = require('quint_viewer.graph')
 local marks = api.nvim_create_namespace('qmodel-symbols')
 local selected_marks = api.nvim_create_namespace('qmodel-selection')
 
@@ -14,62 +15,6 @@ local function write_lines(buf, lines)
   vim.bo[buf].modifiable = true
   api.nvim_buf_set_lines(buf, 0, -1, false, lines)
   vim.bo[buf].modifiable = false
-end
-
-local function graph_rows(model)
-  local lines, targets = {}, {}
-  local function row(text, ...)
-    local refs = {}
-    for i = 1, select('#', ...) do
-      for _, part in ipairs(select(i, ...)) do
-        if part.symbol then
-          refs[#refs + 1] = { col = #text, end_col = #text + #part.text, symbol = part.symbol, use = part.use }
-        end
-        text = text .. part.text
-      end
-    end
-    lines[#lines + 1] = text
-    targets[#lines] = refs
-  end
-  local function literal(text) return {{text = text}} end
-  local function walk(node, prefix)
-    for _, binding in ipairs(node.bindings) do
-      row(prefix, {{text = binding.name, symbol = binding.symbol}}, literal(' = '), binding.expr)
-    end
-    if node.guard then
-      row(prefix .. 'IF ', node.guard)
-      row(prefix .. '├─ Yes')
-      walk(node.yes, prefix .. '│  ')
-      row(prefix .. '└─ No')
-      walk(node.no, prefix .. '   ')
-    elseif node.outcome then
-      local outcome = node.outcome
-      row(prefix .. 'Status: ', outcome.status, literal('    Label: '), outcome.label)
-      row(prefix .. 'Value:  ', outcome.value, literal('    Count: '), outcome.count)
-      if outcome.next_state then
-        row(prefix .. 'Next state: ', outcome.next_state)
-      elseif #outcome.updates == 0 then
-        row(prefix .. 'Next state: unchanged')
-      else
-        row(prefix .. 'Next state (other fields unchanged):')
-        for _, update in ipairs(outcome.updates) do
-          row(prefix .. '  ', {update.field}, literal(' ← '), update.value)
-        end
-      end
-    elseif node.unsupported then
-      row(prefix .. 'Outside model scope: ', node.unsupported)
-    else
-      row(prefix, node.expression)
-    end
-  end
-  row('Quint decision model: ' .. model.module)
-  row('<Enter> inspect name   ]s / [s next / previous symbol   q close view')
-  for _, graph in ipairs(model.graphs) do
-    row('')
-    row(graph.title)
-    walk(graph.tree, '  ')
-  end
-  return lines, targets
 end
 
 local function check_source(path, fingerprint)
@@ -242,14 +187,9 @@ function M.open(buffer)
   local win = vim.fn.bufwinid(buffer)
   if win == -1 then return end
   local ok, err = pcall(function()
-    local model = vim.json.decode(table.concat(api.nvim_buf_get_lines(buffer, 0, -1, false), '\n'))
-    assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 1,
-      'expected a quint-decision-model v1 export')
-    assert(type(model.source) == 'table' and type(model.source.path) == 'string'
-      and type(model.source.sha256) == 'string' and type(model.graphs) == 'table'
-      and type(model.symbols) == 'table' and type(model.uses) == 'table' and type(model.module) == 'string',
-      'export is missing model data')
-    local lines, targets = graph_rows(model)
+    local model = graph_view.decode(table.concat(api.nvim_buf_get_lines(buffer, 0, -1, false), '\n'))
+    local lines, targets = graph_view.rows(model,
+      '<Enter> inspect name   ]s / [s next / previous symbol   q close view')
     show(buffer, win, model, lines, targets)
   end)
   if not ok then vim.notify('Quint model: ' .. tostring(err), vim.log.levels.ERROR) end

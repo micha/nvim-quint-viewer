@@ -1,11 +1,11 @@
 # Viewer specification roadmap
 
-1. **Model and verify the current Definition-link contract.** The initial
-   slice is [source navigation](source_navigation.qnt) for a valid export of
-   `review` from [the approval example](../examples/approval.qnt).
-2. **Replay the verified histories in Neovim.** A thin interpreter drives
-   the public plugin entry point and keymaps and records observations. Quint
-   judges those observations against the same transition rules.
+The viewer has two independently verified workflows for `review` from
+[the approval example](../examples/approval.qnt): [offline Definition links](source_navigation.qnt)
+and [definition jumps from a read-only source graph](graph_navigation.qnt).
+For both, a thin interpreter drives the public plugin commands and keymaps
+and records observations. Quint judges those observations against the same
+transition rules that produced the histories.
 
 ## Source navigation
 
@@ -35,9 +35,9 @@ nix develop .#spec -c scripts/check-spec.sh
 The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 0.62.4 distribution that Quint uses for TLC. The script runs `quint verify`
 with TLC over the complete finite model (no trace-length cap), then runs
-three named Quint histories: fresh local definition, fresh operator
-definition, and source changed after opening. It checks that each history
-emits a trace. These checks verify the model, not the plugin implementation.
+the named histories in both models and checks each emits a trace. TLC
+explores 19 reachable states for offline navigation and 14 for the source
+graph. These checks verify the models, not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
 local endpoint (for example, `127.0.0.1:8823`).
@@ -76,3 +76,50 @@ executes the same transitions and checks each view. It also keeps the real
 stale warning but substitutes the pane, focus, and cursor changes from a
 fresh jump. Quint must reject that negative control through the same
 assertions. Java and TLC are needed for model verification, not for replay.
+
+## Source graph navigation
+
+Open the saved approval source and run `:QuintView review`. The command
+replaces the window's view with a read-only graph; it leaves source editable.
+On `allowed` in the `IF allowed` row, `gd` asks the attached Quint language
+server for the definition and lands on its name (line 9, byte column 8,
+counting columns from zero). `Ctrl-O` restores the exact graph buffer and
+cursor, without opening a split.
+
+An unsaved edit or a disk edit after graph generation leaves the old graph
+readable. `gd` stays at the occurrence and emits one warning, without sending
+an LSP definition request. The disk-edit history then reloads the source,
+regenerates the graph, and checks that `gd` now lands one line lower and
+`Ctrl-O` returns to the new graph. The model covers a single window, one
+source file and definition, and at most one edit. It assumes a ready server;
+requests in flight while files change, imported definitions, and other LSP
+actions are outside the slice.
+
+### Replay the source graph
+
+The replay uses the real upstream stdio server, not a stub. The tested pair
+is Quint CLI `0.34.0` and `quint-language-server` `0.21.0`. With Node.js and
+npm, you can put that pair on `PATH` without installing them globally:
+
+```sh
+lsp_tools=$(mktemp -d)
+npm install --prefix "$lsp_tools" --no-save --no-package-lock \
+  @informalsystems/quint@0.34.0 @informalsystems/quint-language-server@0.21.0 lodash
+nix develop -c sh -c \
+  'export PATH="$1/node_modules/.bin:$PATH"; shift; exec scripts/check.sh "$@"' \
+  sh "$lsp_tools" --worktree --with-lsp
+```
+
+The explicit `lodash` install works around an undeclared server dependency.
+Omit `--worktree` to test an installation from committed `HEAD`. For just
+this replay, run `python3 -B tests/replay_graph_navigation.py --worktree`
+with the same tools on `PATH`.
+
+[The Lua interpreter](../tests/replay_graph_navigation.lua) observes actual
+window count, focus, source coordinates, modifiability, the exact graph
+cursor, notices, and outgoing definition requests. It waits for the server's
+parse/analysis publications before testing navigation, and waits for any
+requests sent to complete. [The Python driver](../tests/replay_graph_navigation.py)
+feeds the observations back to Quint. Two negative controls keep the other
+observations fixed: report a wrong return cursor, or report one request from
+a stale graph. Both must be rejected during testing.

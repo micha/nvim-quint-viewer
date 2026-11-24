@@ -5,14 +5,17 @@ repository is a standalone Neovim plugin; DML is not a build or test dependency.
 
 ## Boundaries
 
-- `plugin/quint_viewer.lua` registers the `*.qmodel.json` entry point.
-- `lua/quint_viewer/` renders an export and handles navigation. Opening an
-  artifact must not run external commands or require a language server. Validate
-  the format before rendering and check the source fingerprint before jumping.
+- `plugin/quint_viewer.lua` registers `:QuintView` and the `*.qmodel.json` entry
+  point. Only an explicit source view can invoke the exporter or use a language
+  server; opening an artifact stays offline. Validate the format before rendering
+  and check the source fingerprint before using mapped locations.
+- The source graph is a separate read-only buffer. Visualize explicit Quint
+  structure, show other expressions as source, and leave editing and navigation
+  history to Neovim. Use the attached Quint LSP for definition lookup.
 - `tools/export_model.py` and `tools/symbol_index.py` build the decision tree and
   symbol index using Quint’s parsed and typechecked output. Keep definition
-  identities scoped; do not resolve a reference by spelling alone. Keep the DML
-  presentation rules opt-in.
+  identities scoped; do not resolve a reference by spelling alone. DML
+  presentation rules are opt-in for offline exports only.
 - The exporter and viewer share the versioned `quint-decision-model` JSON
   contract. Change both sides and the tests together if it changes. Output must
   be deterministic and must not contain absolute source paths or timestamps.
@@ -48,5 +51,7 @@ Run `nix develop -c scripts/check.sh` (or run the script with the tools on
 `vim.pack.add()`. For uncommitted edits, pass `--worktree` to `scripts/check.sh`
 to load the runtime directly, then rerun the default check after committing.
 
-Add focused tests for changes to the artifact or viewer. Test navigation in
+Add focused tests for changes to the artifact or viewer. For source-graph
+changes, also pass `--with-lsp` with the upstream server on `PATH`; see
+[replay setup](spec/README.md#replay-the-source-graph). Test navigation in
 headless Neovim, and do not report unrun or unavailable checks as passing.
