@@ -57,13 +57,14 @@ nested branches, try the [access review example](examples/access_review/).
   Press Enter on an entry to visit it, or use `:lclose` to close the list.
 
 If the file you built the graph from changes, the old graph stays readable
-but refuses new lookups. For `gd` on an imported definition, the viewer also
-checks that definition's file. An edited or unavailable destination blocks
-that jump without blocking local lookups. Save or reload any affected files,
+but refuses new lookups. For `gd` and `K` on an imported symbol, the viewer also
+checks the definition's file. An edited or unavailable file blocks lookups on
+that symbol without blocking local lookups. Save or reload any affected files,
 then rebuild the graph with `:QuintView review` from the caller. If the server
-still returns the old definition location, restart it from the caller with
-`:lsp restart quint`, wait for it to analyze the file, and try again. The
-viewer does not refresh location lists already returned by the server.
+still returns an old definition location or outdated hover text, restart it
+from the caller with `:lsp restart quint`, wait for it to analyze the file,
+and try again. The viewer does not refresh location lists already returned by
+the server.
 
 Explicit `if`/`else` branches start expanded. On a `Yes` or `No` heading,
 press `za` to toggle that branch, `zc` to close it, or `zo` to open it. A closed
@@ -84,8 +85,8 @@ the file if there are several. If neither identifies a module, place the
 cursor inside one. Modules don't have to match the filename.
 
 `gd`, `K`, and `grr` work on indexed references when a single attached LSP
-client supports the requested operation. `gd` also follows imported
-definitions; imported links do not yet support `K` or `grr`.
+client supports the requested operation. `gd` and `K` also work on imported
+symbols; `grr` is limited to local links.
 
 ## Develop
 

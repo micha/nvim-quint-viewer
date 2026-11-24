@@ -3,8 +3,9 @@
 The viewer has verified models for [source graph selection](graph_selection.qnt),
 [definition jumps from a read-only source graph](graph_navigation.qnt),
 [native branch folding](branch_folding.qnt),
-[hover and references from the source graph](graph_lookups.qnt), and
-[cross-file definition jumps](graph_import.qnt). A thin interpreter
+[hover and references from the source graph](graph_lookups.qnt),
+[cross-file definition jumps](graph_import.qnt), and
+[hover on imported calls](graph_import_hover.qnt). A thin interpreter
 drives public commands and keys and records observations. Quint judges those
 observations against the same transition rules that produced the histories.
 
@@ -39,8 +40,8 @@ The separate shell supplies Quint 0.33.1, Java, and the pinned Apalache
 with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
 explores 15 reachable states for selection, 27 for source graph navigation,
-103 for branch folding, 14 for graph hover and references, and 39 for
-cross-file definition navigation.
+103 for branch folding, 14 for graph hover and references, 39 for cross-file
+definition navigation, and 22 for hover on imported calls.
 These checks verify the models, not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
@@ -174,6 +175,34 @@ reference. Quint must reject each through the same assertion path.
 
 Run `scripts/check.sh --worktree --with-lsp` with the tools above, or run just
 this replay with `python3 -B tests/replay_graph_lookups.py --worktree`.
+
+## Hover on imported calls
+
+In the [hover fixture](../tests/fixtures/graph_import_hover), `remote::allowed`
+resolves to the imported policy while bare `allowed` resolves to a local
+operator with the same name and type. `K` asks the language server at the
+mapped occurrence in the caller, not at the declaration. The server's
+signature and scope-specific documentation appear in a native float without
+moving focus or the graph cursor. `grr` on the imported call remains inert.
+
+`K` on an imported call warns once and sends no request if the caller has an
+unsaved edit or the imported file has changed on disk or in a loaded buffer.
+An edit to the imported file alone does not block a local hover.
+
+[The model](graph_import_hover.qnt) covers one direct import, one ready server,
+at most one edit and one lookup per history. TLC checks all 22 reachable
+states without a trace-length cap (the reachable depth is 5, including the
+initial state). It checks graph freshness, not whether an already-running
+server has reanalyzed a changed import after a graph rebuild. If a rebuilt
+graph still shows older hover text, restart the server from the caller.
+Changes while a request is in flight are outside this model.
+
+[The replay](../tests/replay_graph_import_hover.py) runs with the upstream
+server and reads the actual preview and outbound request. The negative
+controls substitute the same-named local hover text, the local occurrence's
+request, or a real hover request in a stale rejection. Quint must reject each.
+Run `scripts/check.sh --worktree --with-lsp` with the tools above, or run just
+this replay with `python3 -B tests/replay_graph_import_hover.py --worktree`.
 
 ## Native branch folding
 

@@ -155,7 +155,9 @@ local function show(source, path, model)
     local position, target
     for _, ref in ipairs(targets[cursor[1]] or {}) do
       if ref.col <= cursor[2] and cursor[2] < ref.end_col then
-        if not ref.definition_target or kind == 'definition' then
+        -- Hover queries the caller occurrence, but its answer also depends on
+        -- the imported file. Keep the target so both freshness checks run.
+        if not ref.definition_target or kind == 'definition' or kind == 'hover' then
           position, target = ref.position, ref.definition_target
         end
         break
