@@ -73,11 +73,25 @@ local function fresh(buf, path, fingerprint)
     and matches_buffer(buf, bytes) and api.nvim_buf_get_name(buf) == path
 end
 
-local function fresh_target(target)
-  local bytes = read_file(target.path)
-  if not bytes or vim.fn.sha256(bytes) ~= target.sha256 then return false end
-  local buf = vim.fn.bufadd(target.path)
-  return buf > 0 and (not api.nvim_buf_is_loaded(buf) or matches_buffer(buf, bytes))
+local function fresh_imports(imports)
+  if not next(imports) then return true end
+  local snapshot = {}
+  for path, fingerprint in pairs(imports) do
+    local bytes = read_file(path)
+    local realpath = bytes and vim.uv.fs_realpath(path)
+    if not realpath or vim.fn.sha256(bytes) ~= fingerprint then return false end
+    snapshot[realpath] = bytes
+  end
+  -- Check hidden buffers and aliases without creating or loading any buffers.
+  for _, buf in ipairs(api.nvim_list_bufs()) do
+    if api.nvim_buf_is_loaded(buf) then
+      local name = api.nvim_buf_get_name(buf)
+      local realpath = name ~= '' and (snapshot[name] and name or vim.uv.fs_realpath(name))
+      local bytes = realpath and snapshot[realpath]
+      if bytes and not matches_buffer(buf, bytes) then return false end
+    end
+  end
+  return true
 end
 
 local function warn_stale()
@@ -145,25 +159,39 @@ end
 local function show(source, path, model)
   local lines, targets, folds = graph_view.rows(model,
     'gd definition   K hover   grr references   <C-o> return   za toggle branch')
+  local source_file = vim.fs.normalize(vim.uv.fs_realpath(path) or path, {expand_env = false})
+  local source_dir = vim.fs.dirname(source_file)
+  local function resolve(relative)
+    return vim.fs.normalize(vim.fs.joinpath(source_dir, relative), {expand_env = false})
+  end
+  local imports = {}
+  for relative, fingerprint in pairs(model.imports) do
+    imports[resolve(relative)] = fingerprint
+  end
+  for _, refs in ipairs(targets) do
+    for _, ref in ipairs(refs) do
+      local target = ref.definition_target
+      if target then
+        target.path = resolve(target.path)
+        assert(target.path == source_file or imports[target.path], 'projection is missing a definition fingerprint')
+      end
+    end
+  end
+
   local graph = api.nvim_create_buf(false, true)
   vim.bo[graph].bufhidden = 'hide' -- native jump history must be able to return to this buffer
   api.nvim_buf_set_lines(graph, 0, -1, false, lines)
   vim.bo[graph].modifiable = false
   vim.bo[graph].filetype = 'qmodelgraph'
-  local source_dir = vim.fs.dirname(vim.uv.fs_realpath(path) or path)
   for row, refs in ipairs(targets) do
     for _, ref in ipairs(refs) do
-      if ref.definition_target then
-        ref.definition_target.path = vim.fs.normalize(vim.fs.joinpath(source_dir, ref.definition_target.path),
-          {expand_env = false})
-      end
       api.nvim_buf_set_extmark(graph, marks, row - 1, ref.col,
         {end_col = ref.end_col, hl_group = 'Underlined'})
     end
   end
 
   local function check_fresh(target)
-    if fresh(source, path, model.source.sha256) and (not target or fresh_target(target)) then return true end
+    if fresh(source, path, model.source.sha256) and (not target or fresh_imports(imports)) then return true end
     warn_stale()
     return false
   end
@@ -182,7 +210,7 @@ local function show(source, path, model)
     local position, target
     for _, ref in ipairs(targets[cursor[1]] or {}) do
       if ref.col <= cursor[2] and cursor[2] < ref.end_col then
-        -- Ask at the caller occurrence. An import adds a freshness dependency.
+        -- Ask at the caller occurrence. Imported links require the whole import snapshot.
         position, target = ref.position, ref.definition_target
         break
       end

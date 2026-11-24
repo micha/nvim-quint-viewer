@@ -59,16 +59,18 @@ nested branches, try the [access review example](examples/access_review/).
   Press Enter on an entry to visit it, or use `:lclose` to close the list.
 
 If the file you built the graph from changes, the old graph stays readable
-but refuses new lookups. For an imported symbol, the viewer also checks the
-file that defines it. An edited or unavailable file blocks lookups on that
-symbol without blocking local lookups. Save or reload any affected files, then
-rebuild the graph with `:QuintView review` from the caller. For imported
+but refuses new lookups. For imported symbols, the viewer also checks every
+file Quint read through imports, including intermediate re-exports. An
+edited, out-of-date, or unavailable import blocks imported lookups without
+blocking local ones. Save or reload the affected files, then rebuild the
+graph with `:QuintView review` from the caller. For imported
 symbols, `gd` only jumps if the server's destination matches the declaration's
 mapped file, line, and byte column. A `grr` list must contain that same
 location, but this does not guarantee every returned use is up to date. If
 the server still returns outdated results, run `:lsp restart quint` from the
-caller, wait for analysis, and try again. The viewer does not refresh location
-lists already returned by the server. Quint language server 0.21.0 can report
+caller, wait for analysis, and try again. In particular, the viewer cannot
+tell whether hover text came from the old import after a rebuild. It does not
+refresh location lists already returned by the server. Quint language server 0.21.0 can report
 incorrect columns after non-BMP characters (such as emoji) on the declaration
 line; the viewer rejects imported jumps and lists with mismatched columns.
 

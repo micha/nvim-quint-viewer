@@ -50,4 +50,5 @@ if [ -n "$with_lsp" ]; then
   python3 -B "$root/tests/replay_graph_import.py" "$@"
   python3 -B "$root/tests/replay_graph_import_hover.py" "$@"
   python3 -B "$root/tests/replay_graph_import_references.py" "$@"
+  python3 -B "$root/tests/replay_graph_import_chain.py" "$@"
 fi

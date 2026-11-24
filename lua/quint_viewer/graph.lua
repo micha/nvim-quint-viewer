@@ -1,12 +1,23 @@
 local M = {}
 local max_fold_depth = 20 -- Neovim's native limit, including expression folds.
+local windows = vim.fn.has('win32') == 1
+
+local function relative_path(path)
+  return type(path) == 'string' and path ~= '' and not vim.startswith(path, '/')
+    and not (windows and (vim.startswith(path, '\\') or path:match('^%a:')))
+end
 
 function M.decode(text)
   local model = vim.json.decode(text)
-  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 3,
-    'expected a quint-decision-model v3 projection')
+  assert(type(model) == 'table' and model.format == 'quint-decision-model' and model.version == 4,
+    'expected a quint-decision-model v4 projection')
   assert(type(model.source) == 'table' and type(model.source.sha256) == 'string'
-    and type(model.graphs) == 'table' and type(model.module) == 'string', 'projection is missing model data')
+    and type(model.graphs) == 'table' and type(model.module) == 'string'
+    and type(model.imports) == 'table', 'projection is missing model data')
+  for path, fingerprint in pairs(model.imports) do
+    assert(relative_path(path) and type(fingerprint) == 'string' and #fingerprint == 64
+      and fingerprint:match('^[0-9a-f]+$'), 'projection has an invalid import fingerprint')
+  end
   return model
 end
 
@@ -19,9 +30,10 @@ function M.rows(model, legend)
       if part.position then
         local target = part.definition_target
         if target then
-          local column = target.column
-          assert(type(column) == 'number' and column >= 0 and column % 1 == 0,
-            'projection has an invalid definition byte column')
+          assert(type(target) == 'table' and relative_path(target.path)
+            and type(target.line) == 'number' and target.line >= 1 and target.line % 1 == 0
+            and type(target.column) == 'number' and target.column >= 0 and target.column % 1 == 0,
+            'projection has an invalid definition position')
         end
         refs[#refs + 1] = {col = #text, end_col = #text + #part.text,
           position = part.position, definition_target = target}

@@ -5,8 +5,9 @@ The viewer has verified models for [source graph selection](graph_selection.qnt)
 [native branch folding](branch_folding.qnt),
 [hover and references from the source graph](graph_lookups.qnt),
 [cross-file definition jumps](graph_import.qnt),
-[hover on imported calls](graph_import_hover.qnt), and
-[references to imported calls](graph_import_references.qnt). A thin interpreter
+[hover on imported calls](graph_import_hover.qnt),
+[references to imported calls](graph_import_references.qnt), and
+[lookup freshness across re-exports](graph_import_chain.qnt). A thin interpreter
 drives public commands and keys and records observations. Quint judges those
 observations against the same transition rules that produced the histories.
 
@@ -42,8 +43,8 @@ with TLC over the complete finite model (no trace-length cap), then runs
 the named histories in each model and checks each emits a trace. TLC
 explores 15 reachable states for selection, 27 for source graph navigation,
 103 for branch folding, 14 for graph hover and references, 61 for cross-file
-definition navigation, 18 for hover on imported calls, and 64 for references
-to imported calls.
+definition navigation, 18 for hover on imported calls, 64 for references
+to imported calls, and 43 for lookup freshness across re-exports.
 These checks verify the models, not the plugin implementation.
 Quint can reuse an already-running Apalache server; to use the pinned
 version, leave port 8822 free or set `QMODEL_SPEC_ENDPOINT` to another unused
@@ -150,7 +151,7 @@ depth 11, including the initial state). The model covers one direct import,
 one ready server, and at most one edit: an unsaved edit, a disk move to a new
 line, or a same-line shift. It compares positions after conversion to byte
 columns; it does not model LSP encodings, changes during an in-flight request,
-or transitive import invalidation.
+or [transitive import invalidation](#lookup-freshness-across-re-exports).
 
 The replay starts with the imported file unopened and checks the exact file
 path, one-based line, and zero-based byte column. The same-line shift inserts
@@ -251,6 +252,36 @@ local results, add the other caller's use, report a request from a stale
 graph, or show the old server's list after a rebuild. Quint must reject each.
 Run `scripts/check.sh --worktree --with-lsp` with the tools above, or run
 just `python3 -B tests/replay_graph_import_references.py --worktree`.
+
+## Lookup freshness across re-exports
+
+In the [fixture](../tests/fixtures/graph_import_chain), `caller.qnt` imports
+`wrapper.qnt`, which re-exports `allowed` from `policy.qnt`. Editing only
+`wrapper.qnt` redirects `remote::allowed` to another module's declaration
+in the same `policy.qnt`, with different hover text and reference locations.
+With Quint LSP 0.21.0, the old viewer sent all three lookups and the server
+still returned the original declaration, hover, and references after a disk edit.
+
+The exporter records the fingerprints of all files Quint read through imports,
+not just the file that declares each symbol. A change on disk or an unsaved
+edit in the wrapper makes `gd`, `K`, and `grr` on `remote::allowed` warn once
+without sending an LSP request; focus and the graph cursor stay put. The
+same keys still work on the local `allowed`. After a disk redirect, restarting
+the server from the caller and rebuilding the graph recovers all three lookups
+with the new declaration, hover text, and reference list. After a successful
+`gd`, `Ctrl-O` restores the original graph buffer and cursor.
+
+[TLC](#verify-and-generate-histories) checks all 43 reachable states without a
+trace-length cap (reachable depth 11, including the initial state). The
+[model](graph_import_chain.qnt) covers one chain, one ready server, one edit,
+and recovery after a disk edit. Rebuilding without a server restart and
+changes while a request is in flight are outside this slice.
+
+The [replay](../tests/replay_graph_import_chain.py) exercises 12 histories
+with the real server. Negative controls report a sent request after a disk
+or buffer edit, or substitute the original hover or reference list after
+recovery. Quint rejects each. Run `scripts/check.sh --worktree --with-lsp`
+with the tools above, or `python3 -B tests/replay_graph_import_chain.py --worktree`.
 
 ## Native branch folding
 

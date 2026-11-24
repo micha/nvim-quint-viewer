@@ -2,6 +2,7 @@
 
 from hashlib import sha256
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -9,13 +10,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
-def export(source, output, *names):
+def export(source, output, *names, imports=None):
     subprocess.run([sys.executable, '-B', str(ROOT / 'tools/export_model.py'), '-o', str(output), '--',
                     str(source), *names], check=True, timeout=60)
     model = json.loads(output.read_bytes())
-    assert set(model) == {'format', 'version', 'source', 'module', 'graphs'}, model.keys()
-    assert (model['format'], model['version']) == ('quint-decision-model', 3)
+    assert set(model) == {'format', 'version', 'source', 'module', 'graphs', 'imports'}, model.keys()
+    assert (model['format'], model['version']) == ('quint-decision-model', 4)
     assert model['source'] == {'sha256': sha256(source.read_bytes()).hexdigest()}
+    assert model['imports'] == (imports or {}), model['imports']
     assert [graph['title'] for graph in model['graphs']] == list(names)
     return model
 
@@ -58,14 +60,14 @@ if __name__ == '__main__':
     print('Source graph positions and record neutrality passed.')
 
     source = ROOT / 'tests/fixtures/graph_import/caller.qnt'
-    model = export(source, work / 'import-projection.json', 'review')
+    target_hash = sha256(source.with_name('policy.qnt').read_bytes()).hexdigest()
+    model = export(source, work / 'import-projection.json', 'review', imports={'policy.qnt': target_hash})
     guard = model['graphs'][0]['tree']['guard']
     assert ''.join(part['text'] for part in guard) == 'remote::allowed(ok)', guard
     links = [part for part in guard if 'position' in part]
-    target_hash = sha256(source.with_name('policy.qnt').read_bytes()).hexdigest()
     assert links == [{
         'text': 'remote::allowed', 'position': {'line': 6, 'column': 8},
-        'definition_target': {'path': 'policy.qnt', 'line': 2, 'column': 11, 'sha256': target_hash},
+        'definition_target': {'path': 'policy.qnt', 'line': 2, 'column': 11},
     }, {'text': 'ok', 'position': {'line': 6, 'column': 24}}], links
     directory = work / 'unicode-import'
     directory.mkdir()
@@ -75,9 +77,32 @@ if __name__ == '__main__':
     prefix = '  /* é😀 */ pure def '
     policy = policy.replace('  pure def allowed', prefix + 'allowed').replace('\n', '\r\n').encode('utf-8')
     caller.with_name('policy.qnt').write_bytes(policy)
-    model = export(caller, work / 'unicode-import-projection.json', 'review')
+    model = export(caller, work / 'unicode-import-projection.json', 'review',
+                   imports={'policy.qnt': sha256(policy).hexdigest()})
     [target] = [part['definition_target'] for part in model['graphs'][0]['tree']['guard']
                 if 'definition_target' in part]
-    assert target == {'path': 'policy.qnt', 'line': 2, 'column': len(prefix.encode('utf-8')),
-                      'sha256': sha256(policy).hexdigest()}, target
+    assert target == {'path': 'policy.qnt', 'line': 2, 'column': len(prefix.encode('utf-8'))}, target
     print('Imported occurrences, destination byte positions and fingerprints passed.')
+
+    fixture = ROOT / 'tests/fixtures/graph_import_chain'
+    directory = work / 'import-chain'
+    shutil.copytree(fixture, directory)
+    imports = {name: sha256((fixture / name).read_bytes()).hexdigest() for name in ('policy.qnt', 'wrapper.qnt')}
+    original = work / 'original-chain.json'
+    relocated = work / 'relocated-chain.json'
+    model = export(fixture / 'caller.qnt', original, 'review', imports=imports)
+    export(directory / 'caller.qnt', relocated, 'review', imports=imports)
+    assert original.read_bytes() == relocated.read_bytes(), 'projection depends on the checkout path'
+    assert model['graphs'][0]['tree']['guard'][0]['definition_target'] == {
+        'path': 'policy.qnt', 'line': 3, 'column': 11,
+    }
+
+    wrapper = directory / 'wrapper.qnt'
+    wrapper.write_bytes(wrapper.read_bytes().replace(b'policy.*', b'alternatePolicy.*'))
+    imports['wrapper.qnt'] = sha256(wrapper.read_bytes()).hexdigest()
+    redirected = export(directory / 'caller.qnt', work / 'redirected-chain.json', 'review', imports=imports)
+    assert redirected['source'] == model['source'], 'caller changed during wrapper redirect'
+    assert redirected['graphs'][0]['tree']['guard'][0]['definition_target'] == {
+        'path': 'policy.qnt', 'line': 9, 'column': 11,
+    }
+    print('Transitive import fingerprints and deterministic re-export anchors passed.')

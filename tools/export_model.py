@@ -104,11 +104,15 @@ def load_ir(quint, source, module_name, raw, cursor, names):
         for path, fingerprint in fingerprints.items():
             if sha256(path.read_bytes()).hexdigest() != fingerprint:
                 raise ValueError('Quint source changed while building the graph; run :QuintView again')
-        targets = review_targets(parsed, index, source, contents, fingerprints)
-        return module['name'], names, definitions, offsets, checked, targets
+        targets = review_targets(parsed, index, source, contents)
+        # A binding points at its final declaration, not every re-export on
+        # the way there. Retain the whole external input set reported by Quint.
+        imports = {relpath(path, source.parent): fingerprint
+                   for path, fingerprint in fingerprints.items() if path != source}
+        return module['name'], names, definitions, offsets, checked, targets, imports
 
 
-def review_targets(parsed, index, source, contents, fingerprints):
+def review_targets(parsed, index, source, contents):
     lines = {file: raw.decode('utf-8').split('\n') for file, raw in contents.items()}
     targets = {}
     for use, binding in parsed['table'].items():
@@ -118,8 +122,7 @@ def review_targets(parsed, index, source, contents, fingerprints):
             file = Path(index['sourceIndex'][str(file_id)])
             line = lines[file][start['line']]
             column = len(line[:start['col']].encode('utf-8'))
-            targets[use] = dict(path=relpath(file, source.parent), line=start['line'] + 1,
-                                column=column, sha256=fingerprints[file])
+            targets[use] = dict(path=relpath(file, source.parent), line=start['line'] + 1, column=column)
     return targets
 
 
@@ -172,13 +175,13 @@ def main():
         raw = source.read_bytes()
         text = raw.decode('utf-8')
         cursor = cursor_index(raw, args.cursor) if args.cursor is not None else None
-        module, names, definitions, offsets, checked, definition_targets = load_ir(
+        module, names, definitions, offsets, checked, definition_targets, imports = load_ir(
             args.quint, source, args.module, raw, cursor, args.definitions)
         index = Index(definitions, offsets, text, checked['table'], definition_targets)
         exporter = Exporter(definitions, index)
         model = {
-            'format': 'quint-decision-model', 'version': 3, 'module': module,
-            'source': {'sha256': sha256(raw).hexdigest()},
+            'format': 'quint-decision-model', 'version': 4, 'module': module,
+            'source': {'sha256': sha256(raw).hexdigest()}, 'imports': imports,
             'graphs': [exporter.graph(name) for name in names],
         }
         args.output.write_text(json.dumps(model, ensure_ascii=False, sort_keys=True) + '\n', encoding='utf-8')
